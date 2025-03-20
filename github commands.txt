@@ -1,0 +1,37 @@
+USABLE COMMANDS
+
+# Navigate to your repository
+cd C:\Users\susan\OneDrive\Escritorio\Python_Projects\your-repo
+
+# Check status
+git status
+
+# Stage all changes
+git add .
+
+# Commit changes
+git commit -m "Moved files to new folder"
+
+# Push changes to GitHub
+git push origin main
+
+
+FIRTS github commands
+step 1) check latest update in github and download the file if it's newer than the local version
+setp 2) after any modifications to the code, commit the new modifications to github as follows:
+
+(.venv) PS C:\Users\susan\OneDrive\Escritorio\Python_Projects\2025thermalmodel> 
+git init
+git add . 
+git status
+git commit -m"conver v3 to python"
+git log 
+	commit 7f27ebfc7c3b1296cf9f7eab30a12b618dae4df4 (HEAD -> master)
+	Author: SGilSayas <susanagilsayas@gmail.com>
+	Date:   Mon Feb 10 14:53:50 2025 +0100
+git remote add gh https://github.com/SGilSayas/MACproject.git
+git push gh
+	fatal: The current branch master has no upstream branch. 
+	To push the current branch and set the remote as upstream, use: git push --set-upstream gh master
+git push gh main
+

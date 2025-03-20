@@ -1,0 +1,8 @@
+air_mass_flow_HVAC = kg/s
+Q_target(t-1) = 	mass_flow_HVAC		* rho_air * V_cabin 	* cp_air 		* (temperature(13)-Temp_conf)/timestep; 	% J/s; 
+					(kg/m3)(m3)		(J/ kg*K)		K/s  
+
+					* rho_air * V_cabin / mass_flow
+					(kg/m3)(m3)/(kg)
+					air_mass_in_1s (kg)
+		

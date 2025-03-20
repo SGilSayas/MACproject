@@ -1,0 +1,4 @@
+Step 1) Go to folder "inputs_vehiclestests" and copy the vehicle test file to validate
+Step 2) Paste the vehicle test file in the folder "inputs_thermalmodel_v4"
+Step 3) Run the code and save results
+Step 4) Delete the vehicle test file from the folder "inputs_thermalmodel_v4"

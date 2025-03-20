@@ -1,0 +1,4 @@
+N humans=0;
+Irradance=0;
+Q_air_cabin=Qtarget+Qwindows+Qceiling+Qbase;
+eff HX=0.8
