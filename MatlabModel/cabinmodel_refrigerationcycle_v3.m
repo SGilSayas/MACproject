@@ -2,37 +2,8 @@ clc;
 clear;
 close all;
 clear py;
-pkg install -forge io
-pkg load io
+% for octave pkg install -forge io; pkg load io;
 %%
-% Working on V4:
-% Trying to understand/fix the following:
-% Front volume shares in C_cabin_front and _back influence a lot where the
-% model is droping the simulated temperature to very bad resutls. In that
-% valley, the PID error is dropping from 2C until 90C, afterwards starting
-% from the original error but never reaching 0 (so our simulated cabin
-% temperature is never equal to the set target tmperature (set-point)). In
-% that valley, the heat exchanged from the front -calculated apart**- is 0,
-% meaning that the heat needs to leave the front to work, and when not
-% happening model doesnt work. But physically, that heat shouldnt go out
-% during those seconds (when heat exchange lag is zero).
-% **: code line around 532 "%% Exchange from the front and back".
-%
-% Giorgos' suggestion: check units. Delete the section "exchange from the
-% front and back" and merge that if statement in the definition of the
-% conductances matrix, allowing the heat to go in or out of the cabin
-% already in that calculation. How it's now, the conductances matrix
-% calculate the eat going in, and if the T cabin is higher that the T
-% ambient, another heat flow appears going out.
-%
-% - Expected compressor behaviour: Compressor power having a peak, and
-% after slowly going down and remaining on at a lower power level. Never
-% negative.
-% - Expected refigerant mass flow (mf): beween 20 and 80 g/s, never
-% negative
-% - Expected PID error: going towards zero.
-% - Expected Temepratures: starting around 35 C and getting to 22 C.
-%
 % V3:
 % - Initial heat exchanged cabin Air with the HVAC defined with T target
 % - Addition of PID CONTROLLER for Compressor Speed. Input = error
@@ -559,9 +530,10 @@ for t=2:Total_time+1 % better for for the mf
         %Qcv_received(t) = Qcv_received(t)+(T_amb(t)-temperature(14))*UA_back(t);
         Qcv_received(t) = (T_amb(t)-temperature(14))*UA_back(t);
     end
-%CHECKS
-    Qcv_emitted(t) = 0;
-    % to 0 does not change anything Qcv_received(t) = 0;
+% %CHECKS
+    % Qcv_emitted(t) = 0;
+    % Qcv_received(t) = 0;
+%     % to 0 does not change anything Qcv_received(t) = 0;
 
     % Heat requested from the MAC system (evaporator's or condenser's work), Q cabin
     Qcabin_received(t) = Qhuman(t) + Qequipment(t) + Qengine_av(t) + Qexhaust_av(t) + Qvent(t) + Qleakage(t) + Qcv_received(t);
