@@ -104,8 +104,8 @@ P_amb_kPa = ones(1,Total_time+1)*P_amb_kPa_mean;
 
 % Load input Engine and exhaust heat flows
 load('heatflow_engine_exhaust_W.mat')
-Qengine_av = ones(1,Total_time+1)*mean(Qengine);
-Qexhaust_av = ones(1,Total_time+1)*mean(Qexhaust);
+Qengine = ones(1,Total_time+1)*mean(Qengine);
+Qexhaust = ones(1,Total_time+1)*mean(Qexhaust);
 
 % Cabin dimensions for category C
 vehicle_height = 1.46;
@@ -356,6 +356,9 @@ COP(t) = 0; % Coefficient of performance [-]
 
 % initialization of heat flows
 Qleakage = ones(1,Total_time+1);
+Qvent = zeros(1,Total_time+1);
+Qbase = zeros(1,Total_time+1); 
+Qirr = zeros(1,Total_time+1);
 Qhuman = ones(1,Total_time+1);
 Qcabin_req = ones(1,Total_time+1);
 Qcabin_received= ones(1,Total_time+1);
@@ -493,6 +496,7 @@ for t=2:Total_time+1 % better for for the mf
     Qbase(t) = alpha_base*(A_ws*G_ws_t(t)+A_rw*G_rw_t(t)+A_sidewindows*G_sidewindows_t(t)+A_sidewindows*G_doors_t(t));
     Qhuman(t) = N_Humans.*h_cabin*A_skin*abs(temperature(2)-T_skin);
     Qequipment(t) = heat_equipment;
+    Qirr(t)=0;
 
     %% Boundary conditions vector for scalar or vector T amb inputs
     if(size(T_cell)==[1 1])
@@ -536,7 +540,7 @@ for t=2:Total_time+1 % better for for the mf
     % Qcv_received(t) = 0;
 
     % Heat requested from the MAC system (evaporator's or condenser's work), Q cabin
-    Qcabin_received(t) = Qhuman(t) + Qequipment(t) + Qengine_av(t) + Qexhaust_av(t) + Qvent(t) + Qleakage(t) + Qcv_received(t);
+    Qcabin_received(t) = Qhuman(t) + Qequipment(t) + Qengine(t) + Qexhaust(t) + Qvent(t) + Qleakage(t) + Qcv_received(t);
     Qcabin_tot(t) = Qcabin_received(t) + Qcv_emitted(t);
 
 %%  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% v2 %%%%%%%
@@ -563,7 +567,7 @@ for t=2:Total_time+1 % better for for the mf
     Ref = char(fluid);
 
     % Check if T_cell is in the table
-    idx = find(R1234yf_op_pres.T_ambient_C == 3(t));
+    idx = find(R1234yf_op_pres.T_ambient_C == T_cell(t));
 
     if ~isempty(idx) % If T_cell is found in the table
         P_LowSide_max_Pa = 1000*R1234yf_op_pres.P_LowSide_max_kPa(idx);
