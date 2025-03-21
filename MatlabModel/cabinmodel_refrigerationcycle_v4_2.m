@@ -4,8 +4,16 @@ close all;
 clear py;
 
 %%
-% V4_2: new version of v4 starting frech from v3
-% Goal: to switch to the three-nodes approach instead of keeping 14 nodes
+% V4_2: new version of v4 starting fresh from v3
+% - 14 nodes modified to 3 nodes and it works
+% - Modification of Q_engine and Q_exhaust, deleting "_av", so taking the
+% cycle heat, not the average (needed for keepong 1800 s too)
+% - Substitution ot T_amb for T_cell
+% - Reading inputs from other folders done
+% - Reset of loop end point (Total_time, instead of Total_time+1)
+% - Reset initialization vectors to (Total_time, instead of Total_time+1) 
+%  -Reset limits for plots to keep same vector length
+% - Gola: the script out of the folder
 %
 % V3: it works
 % - Initial heat exchanged cabin Air with the HVAC defined with T target
@@ -38,6 +46,46 @@ clear py;
 % if all ok: check this on cmd window: pip install coolprop
 % if all ok: check this on matlab terminal py.CoolProp.CoolProp.PropsSI('T','P',101325,'Q',0,'Water')
 
+%% Constant input data upload
+folderPath = 'C:\Users\susan\OneDrive - UPV\Desktop_UPV\Doctorado\PhD Simulation Model\Lumped model\2025_Matlab Cabin HVAC model\inputs_thermalmodelv4_forrunning';
+% Read CSV files
+csvFiles = dir(fullfile(folderPath, '*.csv'));
+for i = 1:length(csvFiles)
+    csvFileName = fullfile(folderPath, csvFiles(i).name);
+    disp(['Reading CSV file: ', csvFileName]);
+    
+    % Read the entire CSV file into a table
+    R1234yf_op_pres = readtable(csvFileName);
+    
+    % Generate a valid variable name from the filename
+    csvFileBaseName = matlab.lang.makeValidName(erase(csvFiles(i).name, '.csv'));
+    
+    % Assign the whole table as a single variable in the workspace
+    assignin('base', csvFileBaseName, R1234yf_op_pres);
+   
+    disp(['Extracted table: ', csvFileBaseName]);
+end
+% Read .mat files
+matFiles = dir(fullfile(folderPath, '*.mat'));
+for i = 1:length(matFiles)
+    fileName = fullfile(folderPath, matFiles(i).name);
+    disp(['Loading .mat file: ', fileName]);
+
+    % Load .mat file into a struct
+    matData = load(fileName);
+    
+    % Get all variable names in the .mat file
+    fields = fieldnames(matData);
+    
+    % Assign each variable dynamically to the workspace
+    for j = 1:length(fields)
+        varName = fields{j}; % Extract variable name
+        assignin('base', varName, matData.(varName)); % Assign in base workspace
+        disp(['Extracted .mat variable: ', varName]);
+    end
+end
+disp('All files have been read and extracted successfully.');
+
 %% Test conditions
 t = 1;
 timestep = 1;
@@ -46,82 +94,75 @@ Total_time = duration_WLTC;
 time = 1:timestep:Total_time;
 time = transpose(time);
 
+% Cabin target temperature in C?
+T_target = 22;
+T_target = T_target + 273.15; %K
+
+% Number of humans?
 N_Humans = 1;
 
-fuel = 'PETROL'; %  or 'DIESEL';
+% Refrigeran fluid of MAC system
+fluid = {'R1234yf'}; %{'Water'};{'R134a'};
 
-% Cabin target temperature
-T_target = 22 + 273.15; % K
-T_target = 22 + 273.15;
+% Vehicle fuel type?
+fuel = 'PETROL'; %'DIESEL';
 
-% V1: If fixing time to reach target temperature
-    % T0cabin= (Tcabin_front(1)+Tcabin_back(1))/2; % K
-    % time_target = ones(1,Total_time+1)* 900; %s, time to reach T_target from T0cabin -> TBD in the loop
-    % tcons= time_target/log(abs(T0cabin-T_target)); % pull-down constant: overall pull-down time
+% Vehicle powertrain? 1 for yes, 0 for no
+bev = 1;
+phev_cd = 0;
+phev_cs = 0;
+icev = 0;
 
-%% Standard copressor's isoentropic efficiency, eta_is = (h2s-h1)/(h2-h1)
+% Vehicle category?
+hatchback = 0;
+suv = 1;
+
+% Setting a vehicle category factor 
+if hatchback == 1    cat_factor = 1;
+elseif suv ==1    cat_factor = 1.5;
+end
+
+% Standard copressor's isoentropic efficiency, eta_is = (h2s-h1)/(h2-h1)
 eta_is = 0.8; % av: 0.8;
 compressor_on_lower_limit = 600; % W
 
-%% T between HX-sources:
+% T between HX-sources:
 % heat exchangers (evap&cond) and cold&hot sources (cabin&external air)
 delta_T_evap = 7;   % Automotive: 7-12  ; HVAC: 5-10
 delta_T_cond = 10;  % Automotive: 10-15 ; HVAC: 5-15
 
 %% Ambient conditions
-Irr_scalar = 0; % W/m2
-Irr = ones(1,Total_time+1)*Irr_scalar;
+T_ini = TC_cell(1) + 273.15; % alternative: T_ini = TC_cabin_ini + 273.15;
+T_cell = TC_cell + 273.15; %K
 
+Irr_scalar = 0; % W/m2
+Irr = ones(1,Total_time)*Irr_scalar;
 % If not loading data:
     % T_cell_constant = 35; %C
-    % T_cell = ones(1,Total_time+1)*T_cell_constant + 273.15; %K % Row vecto
-
-% Load ambient temperature
-load G8_35_cell_front_back.mat TC_cell TC_front TC_back
-T_cell = TC_cell + 273.15 ; %K
-T_cell(Total_time) = T_cell(Total_time-1);
-T_cell(Total_time+1) = T_cell(Total_time-1);
-TC_front(Total_time) = TC_front(Total_time-1);
-TC_front(Total_time+1) = TC_front(Total_time-1);
-TC_back(Total_time) = TC_back(Total_time-1);
-TC_back(Total_time+1) = TC_back(Total_time-1);
-
-T_ini = T_cell(1); % alternative: T_ini = TC_cabin_ini + 273.15;
-
-%% Select and load working fluid operation pressures
-fluid = {'R1234yf'}; %{'Water'}; % %{'R134a'};
-R1234yf_op_pres = readtable('R1234yf_operating_pressures.xlsx','VariableNamesRow',1);
-    % Verify content: disp(R1234yf_op_pres);
+    % T_cell = ones(1,Total_time)*T_cell_constant + 273.15; %K % Row vecto
 
 %% Constant input data
-
-% Load input cell humidity (RH) and pressure (P)
-load('G7_35_off_RH_P_amb')
-RH_amb_mean=mean(RH_amb);
-P_amb_kPa_mean=mean(P_amb_kPa);
-RH_amb = ones(1,Total_time+1)*RH_amb_mean;
-P_amb_kPa = ones(1,Total_time+1)*P_amb_kPa_mean;
-
-% Load input Engine and exhaust heat flows
-load('heatflow_engine_exhaust_W.mat')
-Qengine = ones(1,Total_time+1)*mean(Qengine);
-Qexhaust = ones(1,Total_time+1)*mean(Qexhaust);
 
 % Cabin dimensions for category C
 vehicle_height = 1.46;
 vehicle_width = 1.8;
 vehicle_lenght = 4.36;
-cat_factor = 1.1;
-cabin_height = vehicle_height - 0.06 - 0.6215/2; % minus roof&base thickness and half of wheel
-cabin_width = vehicle_width - 0.06 - 0.241/2; % minus doors thickness % mirrors=0.241, we use half bc some database width included mirrors and others did not.
-cabin_roof_lenght = vehicle_lenght*0.43;
-cabin_base_lenght = vehicle_lenght*0.35;
+
+% cabin_height = vehicle_height - 0.06 - 0.6215/2; % minus roof&base thickness and half of wheel
+% cabin_width = vehicle_width - 0.06 - 0.241/2; % minus doors thickness % mirrors=0.241, we use half bc some database width included mirrors and others did not.
+% cabin_roof_lenght = vehicle_lenght*0.43;
+% cabin_base_lenght = vehicle_lenght*0.35;
+cabin_height =  0.5456*cat_factor;
+cabin_width = 1.3*cat_factor;
+cabin_roof_lenght = 1.8*cat_factor;
+cabin_base_lenght = 1.45*cat_factor;
+
 seatcm3 = 150*cat_factor; %115; % cm3
 seats_volume = 5*seatcm3*10^(-6); % m3
-V_cabin = (cabin_width*cabin_roof_lenght*cabin_height/2)+(cabin_width*cabin_base_lenght*cabin_height/2) - seats_volume;
-V_cabin = V_cabin*1;
 
-% A=area[m2]
+V_cabin = (cabin_width*cabin_roof_lenght*cabin_height/2)+(cabin_width*cabin_base_lenght*cabin_height/2) - seats_volume;
+
+% Area (m2)
 A_ws=0.63*1.3*cat_factor;
 A_rw=0.29*1*cat_factor;
 A_roof=1.8*1.1*cat_factor;
@@ -135,7 +176,7 @@ A_side = A_sidewindows + A_doors + A_roof;
 % A_front = A_ws + A_sidewindows/2 + A_doors/2 + A_roof/2;
 % A_back = A_rw + A_sidewindows/2 + A_doors/2 + A_roof/2;
 
-    % e=thickness[m]
+% Material's thickness, e (m)
 e_ws=0.006;
 e_rw=0.005;
 e_ABS=0.002;
@@ -145,7 +186,7 @@ e_ceiling=e_ABS+e_steel+e_PU;
 e_sidewindows=0.003;
 e_doors=e_ceiling;
 
-% Fuel (addition of diesel and electric option for next dataset validation)
+% Fuel
 Vpe_petrol = 0.264; % l/kWh
 CF_petrol = 2330; % gCO2/l
 Vpe_diesel = 0.22; % l/kWh
@@ -183,7 +224,7 @@ cp_seats = 2000;    % 500-2000 [J/kgK]
 
 % Human and equipment heat % ISO 8996, Alberto Viti Corsi (IDAE)
 heat_equipment = 40; % W
-Qequipment = ones(1,Total_time+1)*heat_equipment; % W
+Qequipment = ones(1,Total_time)*heat_equipment; % W
 A_skin = 1.5; % m2
 T_skin = 24.648 + 273.15; % K
 
@@ -271,14 +312,14 @@ C(3,3)=C_cabin_back;
 h_front(t) = 160;
 h_side(t) = 0.9*h_front(t);
 h_rear(t) = 0.1*h_front(t);
-h_front = ones(1,Total_time+1)*h_front(t);
-h_side = ones(1,Total_time+1)*h_side(t);
-h_rear = ones(1,Total_time+1)*h_rear(t);
+h_front = ones(1,Total_time)*h_front(t);
+h_side = ones(1,Total_time)*h_side(t);
+h_rear = ones(1,Total_time)*h_rear(t);
 
 UA_front(t) = A_front*h_front(t) + 1*(A_side*h_side(t));
 UA_back(t) = A_back*h_rear(t) + 1*(A_side*h_side(t));
-UA_front = ones(1,Total_time+1).*UA_front(t);
-UA_back = ones(1,Total_time+1).*UA_back(t);
+UA_front = ones(1,Total_time).*UA_front(t);
+UA_back = ones(1,Total_time).*UA_back(t);
     % UA_front(t) = (k_ws*A_ws)/e_ws + ...
     %     0.5*(k_sidewindows*A_sidewindows)/(e_sidewindows) ;
     % UA_back(t) = (k_rw*A_rw)/e_rw + ...
@@ -330,10 +371,9 @@ Tw_int_ws(t)=T_ini;
 Tw_int_rw(t)=T_ini;
 Tw_int_sidewindows(t)=T_ini;
 Tw_int_doors(t)=T_ini;
-Tcabin_front(t)=T_ini;
+% Tcabin_front(t)=T_ini;
 Tcabin_back(t)=T_ini;
-Tcabin(t)=(Tcabin_front(t)+Tcabin_back(t))/2;
-Tcabin=ones(1,Total_time+1)*(Tcabin_front(t)+Tcabin_back(t))/2;
+Tcabin = ones(1,Total_time)*T_ini;
 temperature=[T_ini;T_ini;T_ini];
 prev_temp=[T_ini;T_ini;T_ini];
 
@@ -355,42 +395,42 @@ P4(t) = 0; % Pressure 4 [Pa]
 COP(t) = 0; % Coefficient of performance [-]
 
 % initialization of heat flows
-Qleakage = ones(1,Total_time+1);
-Qvent = zeros(1,Total_time+1);
-Qbase = zeros(1,Total_time+1); 
-Qirr = zeros(1,Total_time+1);
-Qhuman = ones(1,Total_time+1);
-Qcabin_req = ones(1,Total_time+1);
-Qcabin_received= ones(1,Total_time+1);
+Qleakage = ones(1,Total_time);
+Qvent = zeros(1,Total_time);
+Qbase = zeros(1,Total_time); 
+Qirr = zeros(1,Total_time);
+Qhuman = ones(1,Total_time);
+Qcabin_req = ones(1,Total_time);
+Qcabin_received= ones(1,Total_time);
 Qcv_emitted(t) = 0;
-Qcv_emitted = ones(1,Total_time+1);
-Qcabin_tot = zeros(1,Total_time+1);
-Q_out_front = ones(1,Total_time+1);
-Q_out_back = ones(1,Total_time+1);
-Qtarget = ones(1,Total_time+1);
-comp_cum_Wh = ones(1,Total_time+1);
-Qcompressor = ones(1,Total_time+1).*0;
-heat_human = ones(1,Total_time+1);
-Q_evap_req = zeros(1,Total_time+1); % Heat exchanged in the evaporator [W]
-Q_cond_req = zeros(1,Total_time+1); % Heat echanged in the condenser   [W]
+Qcv_emitted = ones(1,Total_time);
+Qcabin_tot = zeros(1,Total_time);
+Q_out_front = ones(1,Total_time);
+Q_out_back = ones(1,Total_time);
+Qtarget = ones(1,Total_time);
+comp_cum_Wh = ones(1,Total_time);
+Qcompressor = ones(1,Total_time).*0;
+heat_human = ones(1,Total_time);
+Q_evap_req = zeros(1,Total_time); % Heat exchanged in the evaporator [W]
+Q_cond_req = zeros(1,Total_time); % Heat echanged in the condenser   [W]
 W_comp(t) = 0; % Work performed by the compresor [W]
 Q_evap(t) = 0; % Heat exchanged in the evaporator [W]
 Q_cond(t) = 0; % Heat echanged in the condenser   [W]
 
 %% v3: Initial heat exchanged of cabin Air with the HVAC, W
-Q_MAC = ones(1,Total_time+1)*cp_air*V_cabin*density_air*(T_target - T_cell(1))/timestep;
+Q_MAC = ones(1,Total_time)*cp_air*V_cabin*density_air*(T_target - T_cell(1))/timestep;
 %%
 Q_MAC_zone = Q_MAC/2;
 
 % previous versions initializations
-cabin_received_cum_Wh = ones(1,Total_time+1);
-cabin_received_Wh_WLTP = ones(1,Total_time+1);
-mac_needed_Wh = ones(1,Total_time+1);
-mac_needed_cum_Wh = ones(1,Total_time+1);
-mac_needed_Wh_WLTP = ones(1,Total_time+1);
-comp_Wh = ones(1,Total_time+1);
-comp_cum_Wh = ones(1,Total_time+1);
-comp_Wh_WLTP = ones(1,Total_time+1);
+cabin_received_cum_Wh = ones(1,Total_time);
+cabin_received_Wh_WLTP = ones(1,Total_time);
+mac_needed_Wh = ones(1,Total_time);
+mac_needed_cum_Wh = ones(1,Total_time);
+mac_needed_Wh_WLTP = ones(1,Total_time);
+comp_Wh = ones(1,Total_time);
+comp_cum_Wh = ones(1,Total_time);
+comp_Wh_WLTP = ones(1,Total_time);
 
 active_time(t) = 0;
 active_time_simulated(t) = 0;
@@ -399,20 +439,20 @@ heating_time_simulated(t) = 0;
 compressor_time(t)=0;
 
 % initializations of flags, PID variables, and others
-check_f = zeros(1,Total_time+1);
-check_b = zeros(1,Total_time+1);
+check_f = zeros(1,Total_time);
+check_b = zeros(1,Total_time);
 temp_error_prev = 0;
 error_sum = 0;
 temp_error(t) = 0; % Temperature error [-]
-temp_error = zeros(1,Total_time+1);
+temp_error = zeros(1,Total_time);
 mf(t) = 20/1000; % Compressor refrigerant mass flow [kg/s]
-comp_speed = ones(1, Total_time+1)*1000; % Compressor speed [rpm]
-e_cabin = ones(1,Total_time+1)*e_amb(1);
-CO2 = ones(1,Total_time+1).*0;
+comp_speed = ones(1, Total_time)*1000; % Compressor speed [rpm]
+% e_cabin = ones(1,Total_time)*e_amb(1);
+CO2 = ones(1,Total_time).*0;
 
 
 %% CALCULATION LOOP
-for t=2:Total_time+1 % better for for the mf
+for t=2:Total_time
 
     % Overall heat transfer coefficients, UA W/(Km2):
     if t>1800-323 % extra high
@@ -454,20 +494,6 @@ for t=2:Total_time+1 % better for for the mf
     K16=h_cabin*A_doors;
     % Tcabin_front --K17-> Tcabin_back
     K17=h_cabin*cabin_width*cabin_height;%A_ws; %TBD
-    % K=[1 0 0 0 0 0 0 0 0 0 0 0 0 0;
-    %     K1 -(K1+K2) K2 0 0 0 0 0 0 0 0 0 0 0;
-    %     0 K2 -(K2+K3/2+K3/2) 0 0 0 0 0 0 0 0 0 (K3/2) (K3/2);
-    %     0 0 0 -(K4/2+K4/2) 0 0 0 0 0 0 0 0 (K4/2) (K4/2);
-    %     K5 0 0 0 -(K5+K6) 0 0 0 K6 0 0 0 0 0;
-    %     K8 0 0 0 0 -(K8+K9) 0 0 0 K9 0 0 0 0;
-    %     K11 0 0 0 0 0 -(K11+K12) 0 0 0 K12 0 0 0;
-    %     K14 0 0 0 0 0 0 -(K14+K15) 0 0 0 K15 0 0;
-    %     0 0 0 0 K6 0 0 0 -(K6+K7) 0 0 0 K7 0;
-    %     0 0 0 0 0 K9 0 0 0 -(K9+K10) 0 0 0 K10;
-    %     0 0 0 0 0 0 K12 0 0 0 -(K12+K13/2+K13/2) 0 (K13/2) (K13/2);
-    %     0 0 0 0 0 0 0 K15 0 0 0 -(K15+K16/2+K16/2) (K16/2) (K16/2);
-    %     0 0 (K3/2) (K4/2) 0 0 0 0 K7 0 (K13/2) (K16/2) -(K3/2+K4/2+K7+K16/2+K17) K17;
-    %     0 0 (K3/2) (K4/2) 0 0 0 0 0 (K10) (K13/2) (K16/2) (K17) -(K3/2+K4/2+K10+K13/2+K16/2+K17)];
     
     % Three-nodes approach:
     UAroof = 1/( 1/K1 + 1/K2 + 1/K3 );
@@ -762,56 +788,56 @@ MAC_calcs = MAC_calcs(2:end,:);
 
 %% Plots MAC components
 figure(1)
-plot(time, MAC_calcs.COP, 'LineWidth', 1);
+plot(time(2:end), MAC_calcs.COP, 'LineWidth', 1);
 xlabel('Time (s)')
 ylabel('COP')
 grid on
 
 figure(2)
-plot(time, MAC_calcs.mf*1000, 'LineWidth', 1); % kg/s to g/s
+plot(time(2:end), MAC_calcs.mf*1000, 'LineWidth', 1); % kg/s to g/s
 xlabel('Time (s)')
 ylabel('Refrigerant mass flow, g/s')
 grid on
 
 figure(3)
-plot(time, MAC_calcs.W_comp, 'LineWidth', 1);
+plot(time(2:end), MAC_calcs.W_comp, 'LineWidth', 1);
 xlabel('Time (s)')
 ylabel('Compressor Work (W)')
 grid on
 
 figure(4)
-plot(time, MAC_calcs.Q_evap, 'LineWidth', 1);
+plot(time(2:end), MAC_calcs.Q_evap, 'LineWidth', 1);
 xlabel('Time (s)')
 ylabel('Evaporator Heat Load (W)')
 grid on
 
 figure(5)
-plot(time, MAC_calcs.Q_cond, 'LineWidth', 1);
+plot(time(2:end), MAC_calcs.Q_cond, 'LineWidth', 1);
 xlabel('Time (s)')
 ylabel('Condenser Heat Load (W)')
 grid on
 
 figure(6)
-plot(time, Qcabin_received(2:end), 'LineWidth', 1);
+plot(time, Qcabin_received, 'LineWidth', 1);
 xlabel('Time (s)')
 ylabel('Cabin Heat Load (W)')
 grid on
 
 %% Plots Cabin Heat Loads
 figure(7)
-plot(time(3:Total_time),Qcabin_tot(3:Total_time),'LineWidth',1.5)
+plot(time,Qcabin_tot,'LineWidth',1.5)
 hold on
-plot(time(3:Total_time),Qcabin_received(3:Total_time),'LineWidth',1.5)
-plot(time(3:Total_time),Qcv_emitted(3:Total_time),'LineWidth',1.5)
+plot(time,Qcabin_received,'LineWidth',1.5)
+plot(time,Qcv_emitted,'LineWidth',1.5)
 ylabel('Cabin Heat Loads [W]')
 xlabel('Time [s]')
 legend('Cabin Total Req','Cabin Received','Cabin Emitted','Location','best')
 grid minor
 
 figure(8)
-plot(time(3:Total_time),Qcabin_req(3:Total_time),':k','LineWidth',1.5)
+plot(time,Qcabin_req,':k','LineWidth',1.5)
 hold on
-plot(time(3:Total_time),Q_MAC(3:Total_time),'-k','LineWidth',1.5)
+plot(time,Q_MAC,'-k','LineWidth',1.5)
 grid minor
 ylabel('MAC Heat [W]')
 xlabel('Time [s]')
@@ -819,7 +845,7 @@ yyaxis right
 ax = gca;
 ax.YColor = [1 0 0];
 hold on
-plot(time(3:Total_time),Qcabin_tot(3:Total_time),'-r','LineWidth',1.5)
+plot(time,Qcabin_tot,'-r','LineWidth',1.5)
 ylabel('Total Cabin Heat [W]','Color',[1 0 0])
 legend('Target Heat: Cabin & evap requested heat)','MAC Heat: Evap given heat','Cabin Total: present heat','Location','best')
 % saveas(figure(12),strcat(test,'_4'),'png')
@@ -831,25 +857,23 @@ plot(-Qcabin_req)
 legend('Evap heat given (Q MAC)','Cabin heat requested (= Q evap req)')
 
 figure(10)
-plot(time,Tcabin_front(3:end)-273.15,':b','LineWidth',1.5)
+plot(time(2:end),Tcabin_front(3:end)-273.15,':b','LineWidth',1.5)
 hold on
-plot(time,Tcabin_back(3:end)-273.15,':m','LineWidth',1.5)
-plot(time,T_cell(2:end)-273.15,'-k','LineWidth',1)
-% plot(time,TC_front(2:end),'-b','LineWidth',1.5)
-% plot(time,TC_back(2:end),'-m','LineWidth',1.5)
-plot(time,Tcabin(3:end)-273.15,':k','LineWidth',1.5)
+plot(time(2:end),Tcabin_back(3:end)-273.15,':m','LineWidth',1.5)
+plot(time(2:end),T_cell(2:end)-273.15,'-k','LineWidth',1)
+plot(time(2:end),Tcabin(3:end)-273.15,':k','LineWidth',1.5)
 hold off
-legend('T front simulated','T back simulated','TC ambient', 'T cabin simulated') %,'TC front','TC back','Location','best')
+legend('T front simulated','T back simulated','TC ambient', 'T cabin simulated')
 grid minor
 xlabel('Time [s]')
 ylabel('Temperature [ºC]')
 
 figure(11)
-plot(time(3:Total_time),comp_speed(3:Total_time),':k','LineWidth',1.5)
+plot(time(2:end),comp_speed(2:end),':k','LineWidth',1.5)
 hold on
-plot(time(3:Total_time),100*MAC_calcs.mf(3:Total_time),'-k','LineWidth',1.5)
+plot(time(2:end),100*MAC_calcs.mf,'-k','LineWidth',1.5)
 yyaxis right
-plot(time, MAC_calcs.W_comp,'LineWidth',1);
+plot(time(2:end), MAC_calcs.W_comp,'LineWidth',1);
 grid minor
 xlabel('Time [s]')
 legend('Compressor speed [rpm]','Mass flow[kg/s]*100','Compressor work (Y)[W]')
