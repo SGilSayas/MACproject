@@ -47,22 +47,18 @@ if(off_tucsonCD_35 == 1)
     field_names = fieldnames(loaded_data);
     max_rows = max(cellfun(@(f) size(loaded_data.(f), 1), field_names));
     collected_data = cell(max_rows, numel(field_names));
-
     for i = 1:numel(field_names)
-        field_table = loaded_data.(field_names{i});
-        field_data = table2array(field_table); % Extract data from table
-
+        % Extract the field data (already a double array)
+        field_data = loaded_data.(field_names{i});
         % Remove NaN values and firs row (time = 0s) from field_data
         field_data = field_data(~isnan(field_data));
-        field_data(1, :) = [];
+        % field_data(1, :) = [];
         num_rows = size(field_data, 1);
-
         % Store cleaned data in collected_data
         collected_data(1:num_rows, i) = num2cell(field_data);
         if num_rows < max_rows
             collected_data(num_rows+1:max_rows, i) = {NaN};
         end
-
         % Save each column as a separate variable without NaN values
         assignin('base', field_names{i}, field_data);
     end
@@ -72,22 +68,18 @@ elseif(off_mustang_35 == 1)
     field_names = fieldnames(loaded_data);
     max_rows = max(cellfun(@(f) size(loaded_data.(f), 1), field_names));
     collected_data = cell(max_rows, numel(field_names));
-
     for i = 1:numel(field_names)
         field_table = loaded_data.(field_names{i});
         field_data = table2array(field_table); % Extract data from table
-
         % Remove NaN values and firs row (time = 0s) from field_data
         field_data = field_data(~isnan(field_data));
         field_data(1, :) = [];
         num_rows = size(field_data, 1);
-
         % Store cleaned data in collected_data
         collected_data(1:num_rows, i) = num2cell(field_data);
         if num_rows < max_rows
             collected_data(num_rows+1:max_rows, i) = {NaN};
         end
-
         % Save each column as a separate variable without NaN values
         assignin('base', field_names{i}, field_data);
     end
@@ -99,23 +91,19 @@ elseif(off_I5PV_35 == 1)
     max_rows = max(cellfun(@(f) size(loaded_data.(f), 1), field_names));
     % Initialize a cell array to store column-aligned data
     collected_data = cell(max_rows, numel(field_names));
-
     % Fill the collected_data array with each field's values, padding with NaN if necessary
     for i = 1:numel(field_names)
         field_table = loaded_data.(field_names{i});
         field_data = table2array(field_table); % Extract data from table
-
         % Remove NaN values and firs row (time = 0s) from field_data
         field_data = field_data(~isnan(field_data));
         field_data(1, :) = [];
         num_rows = size(field_data, 1);
-
         % Store cleaned data in collected_data
         collected_data(1:num_rows, i) = num2cell(field_data);
         if num_rows < max_rows
             collected_data(num_rows+1:max_rows, i) = {NaN};
         end
-
         % Save each column as a separate variable without NaN values
         assignin('base', field_names{i}, field_data);
     end
@@ -152,7 +140,6 @@ elseif(off_G7_22==1)
     TC_pass=TC_pass(:,:);
     TC_back=TC_back(:,:);
     TC_backpass=TC_backpass(:,:);
-
 elseif(off_G7_35==1)
     lab_input='G7_35C_MACoff_TC'; 
     struct=load(lab_input);
@@ -183,7 +170,6 @@ elseif(off_G7_35==1)
     TC_backpass(1802:end,:)=[];
         % For G7 35C: 
     TC_front=TC_vent;
-
 elseif(off_G8_22==1)
     lab_input='G8_22C_MACoff_TCcell1'; 
     struct=load(lab_input);
@@ -193,7 +179,6 @@ elseif(off_G8_22==1)
     n0=height(lab_table)/duration_WLTC;
     TC_cell=array(1 : n0 : end);
     TC_cell=TC_cell(:,:); 
-
     lab_input='G8_22C_MACoff_TCcabin1';
     struct=load(lab_input);
     table=struct2table(struct);
@@ -205,7 +190,6 @@ elseif(off_G8_22==1)
     TC_pass=table2array(lab_table1(:,4)); 
     TC_back=table2array(lab_table1(:,5));
     TC_backpass=table2array(lab_table1(:,6));
-
     n=height(lab_table1)/duration_WLTC;
     TC_vent=TC_vent(1 : n : end);
     TC_front=TC_front(1 : n : end);
@@ -226,13 +210,11 @@ elseif(off_G8_22==1)
             TC_cell(k)=TC_cell(k-200)+0.4;
         end
     end
-
 elseif(off_G8_35==1)
     lab_input='G8_35C_MACoff_TC';
     struct=load(lab_input);
     table=struct2table(struct);
     lab_array=table2array(table);
-
     cell_array=table2array(lab_array(:,7));
     vent_array=table2array(lab_array(:,1));
     front_array=table2array(lab_array(:,2));
@@ -240,7 +222,6 @@ elseif(off_G8_35==1)
     pass_array=table2array(lab_array(:,4));
     back_array=table2array(lab_array(:,5)); 
     backpass_array=table2array(lab_array(:,6));
-
     n=height(lab_array)/(duration_WLTC); %10;%8.5;
     TC_cell=cell_array(1 : n : end);
     TC_vent=vent_array(1 : n : end);
@@ -369,6 +350,10 @@ elseif(off_tucsonCD_35==1)
     % TC_cell=TC_fil(:,1);
 end
 
+%% Definition of total time for the calulations
+Total_time=length(TC_cell); 
+time = 1:timestep:Total_time;
+
 %% Load input Engine RPM (and XCU data)
 lab_input2='G7_35C_MACoff_XCU'; 
 struct2=load(lab_input2);
@@ -417,10 +402,6 @@ RH_amb_mean=mean(RH_amb);
 P_amb_kPa_mean=mean(P_amb_kPa);
 RH_amb = ones(1,Total_time+1)*RH_amb_mean;
 P_amb_kPa = ones(1,Total_time+1)*P_amb_kPa_mean;
-
-%% Definition of total time for the calulations
-Total_time=length(TC_cell); 
-time = 1:timestep:Total_time;
 
 %% Noise deletion
 TC_cell = movmean(TC_cell,10);
@@ -667,7 +648,7 @@ K15=A_doors*k_doors/e_doors;
 K16=h_doors*A_doors;
     % Tcabin_front --K17-> Tcabin_back
 K17=h_cabin*A_ws; %TBD
-K=[1 0 0 0 0 0 0 0 0 0 0 0 0 0;
+K = [1 0 0 0 0 0 0 0 0 0 0 0 0 0;
     K1 -(K1+K2) K2 0 0 0 0 0 0 0 0 0 0 0;
     0 K2 -(K2+K3/2+K3/2) 0 0 0 0 0 0 0 0 0 (K3/2) (K3/2);
     0 0 0 -(K4/2+K4/2) 0 0 0 0 0 0 0 0 (K4/2) (K4/2);
@@ -722,17 +703,14 @@ C(3,3)=C_cabin_back;
 % engine_kW=engine_Nm.*engine_rpm*2*pi/(60*1000);
 
     % Humidity ratio in gram of water per gram of dry air, X
-if(off_G7_22==1 || off_G8_22==1)
-    Ps_kPa = 2.626; % kPa, Water saturation pressure at 22C
-else % 35C
-    Ps_kPa = 5.63; % kPa, Water saturation pressure at 35C
-end
+Ps_22_kPa = 2.626; % kPa, Water saturation pressure at 22C
+Ps_35_kPa = 5.63; % kPa, Water saturation pressure at 35C
+Ps_kPa = Ps_22_kPa+(T_ini-22)/(35-22)*(Ps_35_kPa-Ps_22_kPa);
 meanP_kPa_amb = mean(P_amb_kPa); % in kPa
-X = 0.62198*Ps_kPa.*RH_amb./(100.*P_amb_kPa - Ps_kPa.*RH_amb); % Faya, 2013
+X = 0.0732; % X = 0.62198*Ps_kPa.*RH_amb./(100.*P_amb_kPa - Ps_kPa.*RH_amb); % Faya, 2013
 
     % Enthalpies calculation. Humidity considered same in amb and cabin
-e_amb = 1006.*T_cell + (2501000 + 1770.*T_cell).*X; % J/kg, Faya 2013
-% e_cabin needs to be calc in the loop
+e_amb = 1006.*T_cell + (2501000 + 1770.*T_cell)*X; % J/kg, Faya 2013
 
     % Air vent volume and flow rate:
 vent_volumerate=0.0003; % m3/s, Faya 2013: 0.02; 0.001
@@ -897,7 +875,7 @@ for t=1:Total_time
         Kback Kcabin -(Kback+Kcabin)];
 
         % Cabin air enthalpy
-    e_cabin(t) = 1006*Tcabin(t) + (2501000 + 1770*Tcabin(t))*X(t); % J/kg, Faya 2013
+    e_cabin(t) = 1006*Tcabin(t) + (2501000 + 1770*Tcabin(t))*X; % J/kg, Faya 2013
         
         % Engine and exhaust temperatures
     if(icev == 1)

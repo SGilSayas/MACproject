@@ -67,6 +67,7 @@ clear py;
 %% Test conditions
 t = 1;
 timestep = 1;
+distance_driven = 23.25; % km
 duration_WLTC = 1800; % s
 Total_time = duration_WLTC;
 time = 1:timestep:Total_time;
@@ -383,6 +384,8 @@ A_back = A_rw*2; %1.5
 A_side = A_sidewindows + A_doors + A_roof;
 % A_front = A_ws + A_sidewindows/2 + A_doors/2 + A_roof/2;
 % A_back = A_rw + A_sidewindows/2 + A_doors/2 + A_roof/2;
+A_engine = 0.01*A_ws; %Faya 2013: *0.01
+A_exhaust = 0.01 * cabin_width*cabin_base_lenght; %Faya 2013
 
 % e=thickness[m]
 e_ws=0.006;
@@ -394,7 +397,7 @@ e_ceiling=e_ABS+e_steel+e_PU;
 e_sidewindows=0.003;
 e_doors=e_ceiling;
 e_enginesheet = 0.001; %engine sheet thickness, m
-e_base = 0.1; %m
+e_base = 0.1;
 
 % Fuel
 Vpe_petrol = 0.264; % l/kWh
@@ -423,9 +426,9 @@ k_doors=k_ceiling;
 
 % Heat transfer cat_factorficient of interior cabin air, W/(K*m2)
 if macon == 0
-    h_cabin = 5; % 5-10
+    h_cabin(t) = 5; % 5-10
 else % mac off
-    h_cabin = 15; %TDB
+    h_cabin(t) = 15; %TDB
 end
 
 % Air properies
@@ -501,14 +504,6 @@ Ps_kPa = Ps_22_kPa+(T_ini-22)/(35-22)*(Ps_35_kPa-Ps_22_kPa);
 meanP_kPa_amb = mean(P_amb_kPa); % in kPa
 X = 0.0732; % X = 0.62198*Ps_kPa.*RH_amb./(100.*P_amb_kPa - Ps_kPa.*RH_amb); % Faya, 2013
 
-h_engine = h_ext; % h_engine = f( velocidad aire que pasa por el motor )
-A_engine = 0.01*A_ws; %Faya 2013: *0.01
-A_exhaust = 0.01 * cabin_width*cabin_base_lenght; %Faya 2013
-e_enginesheet = 0.001; %engine sheet thickness, m
-e_base = 0.1; %m
-U_engine = 1/( 1/h_engine + 1/h_cabin + e_enginesheet/k_steel );
-U_exhaust = 1/( 1/h_engine + 1/h_cabin + e_base/k_steel );
-
 compressor_on_lower_limit = 0.5; % W, 
 
 %% Calculation of Properties
@@ -516,32 +511,18 @@ compressor_on_lower_limit = 0.5; % W,
 % Enthalpies calculation. Humidity considered same in cabin and exterior
 enthalpy_amb = 1006.*T_cell + (2501000 + 1770.*T_cell)*X; % J/kg, Faya 2013, % before ".*X"
 
-% Capacitance Matrix
+% Capacitance Matrix, W/K
+% front air volume = 80% of total volume % other hypothesis: 0.9;
+% back air volume = 20% of total cabin volume % other hypothesis: 0.01;
 C_amb = 0; % boundary condition
-C_roof = 0; %for now
-C_ceiling = 0; %for now
-C_base = mass_seats*cp_seats + 144240; %Capacitance, W/K  
-C_ws=0;
-C_rw=0;
-C_sidewindows=0;
-C_doors=0;
-C_cabin_front = density_air*cp_air/timestep*V_cabin*0.8; % front air volume = 80% of total volume % other hypothesis: 0.9;
-C_cabin_back = density_air*cp_air/timestep*V_cabin*0.2; % back air volume = 20% of total cabin volume % other hypothesis: 0.001;
-C=zeros(14);
-C(1,1)=C_amb;
-C(2,2)=C_roof;
-C(3,3)=C_ceiling;
-C(4,4)=C_base;
-C(5,5)=C_ws;
-C(6,6)=C_rw;
-C(7,7)=C_sidewindows;
-C(8,8)=C_doors;
-C(9,9)=C_ws;
-C(10,10)=C_rw;
-C(11,11)=C_sidewindows;
-C(12,12)=C_doors;
-C(13,13)=C_cabin_front;
-C(14,14)=C_cabin_back;
+C_base = mass_seats*cp_seats + 144240;
+C_cabin_front = density_air*cp_air/timestep*V_cabin*0.5;
+C_cabin_back = density_air*cp_air/timestep*V_cabin*0.5; 
+
+C = zeros(3);
+C(1,1) = C_amb;
+C(2,2) = C_cabin_front + C_base*0.5;
+C(3,3) = C_cabin_back + C_base*0.5;
 
 %% Initialization of values
 % Initial heat transfer cat_factorficients, UA (W/K):
@@ -551,6 +532,8 @@ h_rear(t) = 0.1*h_front(t);
 h_front = ones(1,Total_time+1)*h_front(t);
 h_side = ones(1,Total_time+1)*h_side(t);
 h_rear = ones(1,Total_time+1)*h_rear(t);
+h_engine = ones(1,Total_time+1)*h_front(t); % = f(wind speed at the front)
+h_cabin = ones(1,Total_time+1)*h_cabin(t);
 
 UA_front(t) = A_front*h_front(t) + 1*(A_side*h_side(t));
 UA_back(t) = A_back*h_rear(t) + 1*(A_side*h_side(t));
@@ -560,40 +543,43 @@ UA_back = ones(1,Total_time+1).*UA_back(t);
     %     0.5*(k_sidewindows*A_sidewindows)/(e_sidewindows) ;
     % UA_back(t) = (k_rw*A_rw)/e_rw + ...
     %     0.5*(k_sidewindows*A_sidewindows)/(e_sidewindows) ;
+U_engine(t) = 1/( 1/h_engine(t) + 1/h_cabin(t) + e_enginesheet/k_steel );
+U_exhaust(t) = 1/( 1/h_engine(t) + 1/h_cabin(t) + e_base/k_steel );
 
 %  Conductances Matrix 
 K1=h_side(t)*A_roof;
 K2=A_roof*k_ceiling/e_ceiling;
-K3=h_cabin*A_roof;
-K4=h_cabin*A_base;
+K3=h_cabin(t)*A_roof;
+K4=h_cabin(t)*A_base;
 K5=h_front(t)*A_ws;
 K6=A_ws*k_ws/e_ws;
-K7=h_cabin*A_ws;
+K7=h_cabin(t)*A_ws;
 K8=h_rear(t)*A_rw;
 K9=A_rw*k_rw/e_rw;
-K10=h_cabin*A_rw;
+K10=h_cabin(t)*A_rw;
 K11=h_side(t)*A_sidewindows;
 K12=A_sidewindows*k_sidewindows/e_sidewindows;
-K13=h_cabin*A_sidewindows;
+K13=h_cabin(t)*A_sidewindows;
 K14=h_side(t)*A_doors;
 K15=A_doors*k_doors/e_doors;
-K16=h_cabin*A_doors;
-K17=h_cabin*cabin_width*cabin_height;
-K=[1 0 0 0 0 0 0 0 0 0 0 0 0 0;
-    K1 -(K1+K2) K2 0 0 0 0 0 0 0 0 0 0 0;
-    0 K2 -(K2+K3/2+K3/2) 0 0 0 0 0 0 0 0 0 (K3/2) (K3/2);
-    0 0 0 -(K4/2+K4/2) 0 0 0 0 0 0 0 0 (K4/2) (K4/2);
-    K5 0 0 0 -(K5+K6) 0 0 0 K6 0 0 0 0 0;
-    K8 0 0 0 0 -(K8+K9) 0 0 0 K9 0 0 0 0;
-    K11 0 0 0 0 0 -(K11+K12) 0 0 0 K12 0 0 0;
-    K14 0 0 0 0 0 0 -(K14+K15) 0 0 0 K15 0 0;
-    0 0 0 0 K6 0 0 0 -(K6+K7) 0 0 0 K7 0;
-    0 0 0 0 0 K9 0 0 0 -(K9+K10) 0 0 0 K10;
-    0 0 0 0 0 0 K12 0 0 0 -(K12+K13/2+K13/2) 0 (K13/2) (K13/2);
-    0 0 0 0 0 0 0 K15 0 0 0 -(K15+K16/2+K16/2) (K16/2) (K16/2);
-    0 0 (K3/2) (K4/2) 0 0 0 0 K7 0 (K13/2) (K16/2) -(K3/2+K4/2+K7+K16/2+K17) K17;
-    0 0 (K3/2) (K4/2) 0 0 0 0 0 (K10) (K13/2) (K16/2) (K17) ...
-    -(K3/2+K4/2+K10+K13/2+K16/2+K17)];
+K16=h_cabin(t)*A_doors;
+K17=h_cabin(t)*cabin_width*cabin_height;
+% K=[1 0 0 0 0 0 0 0 0 0 0 0 0 0;
+%     K1 -(K1+K2) K2 0 0 0 0 0 0 0 0 0 0 0;
+%     0 K2 -(K2+K3/2+K3/2) 0 0 0 0 0 0 0 0 0 (K3/2) (K3/2);
+%     0 0 0 -(K4/2+K4/2) 0 0 0 0 0 0 0 0 (K4/2) (K4/2);
+%     K5 0 0 0 -(K5+K6) 0 0 0 K6 0 0 0 0 0;
+%     K8 0 0 0 0 -(K8+K9) 0 0 0 K9 0 0 0 0;
+%     K11 0 0 0 0 0 -(K11+K12) 0 0 0 K12 0 0 0;
+%     K14 0 0 0 0 0 0 -(K14+K15) 0 0 0 K15 0 0;
+%     0 0 0 0 K6 0 0 0 -(K6+K7) 0 0 0 K7 0;
+%     0 0 0 0 0 K9 0 0 0 -(K9+K10) 0 0 0 K10;
+%     0 0 0 0 0 0 K12 0 0 0 -(K12+K13/2+K13/2) 0 (K13/2) (K13/2);
+%     0 0 0 0 0 0 0 K15 0 0 0 -(K15+K16/2+K16/2) (K16/2) (K16/2);
+%     0 0 (K3/2) (K4/2) 0 0 0 0 K7 0 (K13/2) (K16/2) -(K3/2+K4/2+K7+K16/2+K17) K17;
+%     0 0 (K3/2) (K4/2) 0 0 0 0 0 (K10) (K13/2) (K16/2) (K17) ...
+%     -(K3/2+K4/2+K10+K13/2+K16/2+K17)];
+
 
 % initial cabin surfaces tmperatures
 Troof(t)=T_ini;
@@ -609,13 +595,10 @@ Tw_int_sidewindows(t)=T_ini;
 Tw_int_doors(t)=T_ini;
 Tcabin_front(t)=T_ini;
 Tcabin_back(t)=T_ini;
-Tcabin(t)=(Tcabin_front(t)+Tcabin_back(t))/2;
+Tcabin = ones(1,Total_time)*(Tcabin_front(t)+Tcabin_back(t))/2;
 
-Tcabin=ones(1,Total_time)*(Tcabin_front(t)+Tcabin_back(t))/2; 
-temperature=[T_ini;T_ini;T_ini;T_ini;T_ini;T_ini;T_ini;T_ini;T_ini;...
-    T_ini;T_ini;T_ini;T_ini;T_ini];
-prev_temp=[T_ini;T_ini;T_ini;T_ini;T_ini;T_ini;T_ini;T_ini;T_ini;...
-    T_ini;T_ini;T_ini;T_ini;T_ini];
+temperature=[T_ini;T_ini;T_ini];
+prev_temp=[T_ini;T_ini;T_ini];
 
 % Refrigerant cycle:
     % point 1: evaporator oulet = compressor inlet
@@ -678,7 +661,7 @@ active_time(t) = 0;
 active_time_simulated(t) = 0;
 cooling_time_simulated(t) = 0;
 heating_time_simulated(t) = 0; 
-count_compressor_on(t)=0;
+count_compressor_on = 0;
 
 % initializations of flags, PID variables, and others
 check_f = zeros(1,Total_time+1);
@@ -716,44 +699,30 @@ for t=1:Total_time-1 % better for for the mf: +1
     % Tamb --K1-> Troof --K2-> Tceiling --K3-> Tcabin_back
     K1=h_side(t)*A_roof;
     K2=A_roof*k_ceiling/e_ceiling;
-    K3=h_cabin*A_roof;
+    K3=h_cabin(t)*A_roof;
     % Tbase --K4-> Tcabin_back
-    K4=h_cabin*A_base;
+    K4=h_cabin(t)*A_base;
     % Tamb --K5-> Tw_ext_ws --K6-> Tw_int_ws --K7-> Tcabin_front
     K5=h_front(t)*A_ws;
     K6=A_ws*k_ws/e_ws;
-    K7=h_cabin*A_ws;
+    K7=h_cabin(t)*A_ws;
     % Tamb --K8-> Tw_ext_rw --K9-> Tw_int_rw --K10-> Tcabin_back
     K8=h_rear(t)*A_rw;
     K9=A_rw*k_rw/e_rw;
-    K10=h_cabin*A_rw;
+    K10=h_cabin(t)*A_rw;
     % Tamb --K11-> Tw_ext_sidewindows --K12-> Tw_int_sidewindows --K13-> Tcabin_back
     K11=h_side(t)*A_sidewindows;
     K12=A_sidewindows*k_sidewindows/e_sidewindows;
-    K13=h_cabin*A_sidewindows;
+    K13=h_cabin(t)*A_sidewindows;
     % Tamb --K14-> Tw_ext_doors --K15-> Tw_int_doors --K16-> Tcabin_back
     K14=h_side(t)*A_doors;
     K15=A_doors*k_doors/e_doors;
-    K16=h_cabin*A_doors;
+    K16=h_cabin(t)*A_doors;
     % Tcabin_front --K17-> Tcabin_back
-    K17=h_cabin*cabin_width*cabin_height;%A_ws; %TBD
-    K=[1 0 0 0 0 0 0 0 0 0 0 0 0 0;
-        K1 -(K1+K2) K2 0 0 0 0 0 0 0 0 0 0 0;
-        0 K2 -(K2+K3/2+K3/2) 0 0 0 0 0 0 0 0 0 (K3/2) (K3/2);
-        0 0 0 -(K4/2+K4/2) 0 0 0 0 0 0 0 0 (K4/2) (K4/2);
-        K5 0 0 0 -(K5+K6) 0 0 0 K6 0 0 0 0 0;
-        K8 0 0 0 0 -(K8+K9) 0 0 0 K9 0 0 0 0;
-        K11 0 0 0 0 0 -(K11+K12) 0 0 0 K12 0 0 0;
-        K14 0 0 0 0 0 0 -(K14+K15) 0 0 0 K15 0 0;
-        0 0 0 0 K6 0 0 0 -(K6+K7) 0 0 0 K7 0;
-        0 0 0 0 0 K9 0 0 0 -(K9+K10) 0 0 0 K10;
-        0 0 0 0 0 0 K12 0 0 0 -(K12+K13/2+K13/2) 0 (K13/2) (K13/2);
-        0 0 0 0 0 0 0 K15 0 0 0 -(K15+K16/2+K16/2) (K16/2) (K16/2);
-        0 0 (K3/2) (K4/2) 0 0 0 0 K7 0 (K13/2) (K16/2) -(K3/2+K4/2+K7+K16/2+K17) K17;
-        0 0 (K3/2) (K4/2) 0 0 0 0 0 (K10) (K13/2) (K16/2) (K17) -(K3/2+K4/2+K10+K13/2+K16/2+K17)];
+    K17=h_cabin(t)*cabin_width*cabin_height;%A_ws; %TBD
 
-    % 3-nodes approach:
-        UAroof = 1/( 1/K1 + 1/K2 + 1/K3 );
+    % Three-nodes approach:
+    UAroof = 1/( 1/K1 + 1/K2 + 1/K3 );
     UAbase = 1/( 1/K4 );
     UAws = 1/( 1/K5 + 1/K6 + 1/K7 );
     UArs = 1/( 1/K8 + 1/K9 + 1/K10 );
@@ -797,7 +766,7 @@ for t=1:Total_time-1 % better for for the mf: +1
     Qvent(t) = vent_volumerate*density_air*(enthalpy_amb(t)-enthalpy_cabin(t)); % W, J/s
     Qbase(t) = alpha_base*(A_ws*G_ws_t(t)+A_rw*G_rw_t(t)+A_sidewindows*G_sidewindows_t(t)+A_sidewindows*G_doors_t(t));
     Qirr(t) = -A_roof*G_roof_a(t)-A_roof*G_roof_a(t)-A_rw*G_rw_a(t)-A_sidewindows*G_sidewindows_a(t)-A_doors*G_doors_a(t);
-    heat_human(t) = h_cabin*A_skin*(Tcabin_front(:,t)-T_skin) ;
+    heat_human(t) = h_cabin(t)*A_skin*(Tcabin_front(:,t)-T_skin) ;
     Qhuman(t) = N_Humans.*heat_human(t);
     Qequipment(t) = heat_equipment;
     Qengine_calc(t) = A_engine*U_engine*(T_engine(t)-Tcabin_front(:,t));% - 11 - 44;
@@ -820,7 +789,7 @@ for t=1:Total_time-1 % better for for the mf: +1
     end
 
     %% Temperatures calculation
-    temperature = (K - C)\(Tbc - C*prev_temp); % same but less accurate: inv(K - C)*(Tbc - C*prev_temp);
+    temperature = (K - C)\(Tbc - C*prev_temp); % same but less accurate: temperature = inv(K - C)*(Tbc - C*prev_temp);
     
     % %Exchange from the front and back:
     % if (temperature(13) > T_cell(t)) 
@@ -905,7 +874,7 @@ for t=1:Total_time-1 % better for for the mf: +1
     
     % (1) Evaporator's outlet = Compressor's inlet, Saturated vapor Q=1
     T1(t)= T_evap(t); % T_evap_out is known
-    P1(t)=py.CoolProp.CoolProp.PropsSI('P','T',T1(t),'Q',1,Ref);
+    P1(t) = py.CoolProp.CoolProp.PropsSI('P','T',T1(t),'Q',1,Ref);
     P1(t) = double(P1(t));
 
     % Ensure evaporator pressure does not exceed the maximum low-side pressure
@@ -1052,8 +1021,8 @@ for t=1:Total_time-1 % better for for the mf: +1
     % Temperature recalculation after the MAC load:
         %Tcabin(t) = (Qcabin_req(t) - Q_MAC(t) )*(timestep/(V_cabin*cp_air*density_air)) + Tcabin(t-1);
     Q_MAC_zone(t) = Q_MAC(t)/2;
-    temperature(13) = (Qcabin_tot(t) / 2 - Q_MAC_zone(t)) * (timestep / (V_cabin / 2 * cp_air * density_air)) + prev_temp(13);
-    temperature(14) = (Qcabin_tot(t) / 2 - Q_MAC_zone(t)) * (timestep / (V_cabin / 2 * cp_air * density_air)) + prev_temp(14);
+    temperature(2) = (Qcabin_tot(t) / 2 - Q_MAC_zone(t)) * (timestep / (V_cabin / 2 * cp_air * density_air)) + prev_temp(2);
+    temperature(3) = (Qcabin_tot(t) / 2 - Q_MAC_zone(t)) * (timestep / (V_cabin / 2 * cp_air * density_air)) + prev_temp(3);
 
     % Save this timestep temperatures to be used in the following timestep
     prev_temp=temperature;
@@ -1068,24 +1037,13 @@ for t=1:Total_time-1 % better for for the mf: +1
 
     % Temperatures extraction
     Tamb(:,t)=temperature(1); %T_cell: boundary condition, Tamb: simulated
-    Troof(:,t)=temperature(2);
-    Tceiling(:,t)=temperature(3);
-    Tbase_int(:,t)=temperature(4);
-    Tw_ext_ws(:,t)=temperature(5);
-    Tw_ext_rw(:,t)=temperature(6);
-    Tw_ext_sidewindows(:,t)=temperature(7);
-    Tw_ext_doors(:,t)=temperature(8);
-    Tw_int_ws(:,t)=temperature(9);
-    Tw_int_rw(:,t)=temperature(10);
-    Tw_int_sidewindows(:,t)=temperature(11);
-    Tw_int_doors(:,t)=temperature(12);
-    Tcabin_front(:,t)=temperature(13);
-    Tcabin_back(:,t)=temperature(14);
+    Tcabin_front(:,t)=temperature(2);
+    Tcabin_back(:,t)=temperature(3);
 
     Tcabin(:,t)= (Tcabin_front(:,t)+Tcabin_back(:,t))/2;
 
     %% CO2 Emissions
-    CO2(t) = abs(Qcompressor(t))*count_compressor_on(t)*Vpe_petrol/1000/3600*CF_petrol/distance_driven;
+    CO2(t) = abs(Qcompressor(t))*count_compressor_on*Vpe_petrol/1000/3600*CF_petrol/distance_driven;
 
 end
 % MAC_calcs = MAC_calcs(2:end,:);
