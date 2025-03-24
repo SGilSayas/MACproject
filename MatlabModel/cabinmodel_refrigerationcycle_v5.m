@@ -467,13 +467,21 @@ temp_error_prev = 0;
 error_sum = 0;
 temp_error(t) = 0; % Temperature error [-]
 temp_error = zeros(1,Total_time);
+
 mf(t) = 20/1000; % Compressor refrigerant mass flow [kg/s]
 comp_speed = ones(1, Total_time)*1000; % Compressor speed [rpm]
 CO2 = ones(1,Total_time).*0;
 
+error = zeros(1,Total_time);
+error_integral = zeros(1,Total_time);
+error_derivative = zeros(1,Total_time);
+prev_error = 0;
+PID_output = zeros(1,Total_time);
 
 %% CALCULATION LOOP
 for t=2:Total_time
+
+    cooling = (T_cell(t) >= T_target);  % True if cooling needed
 
     % Overall heat transfer coefficients, UA W/(Km2):
     if t>1800-323 % extra high
@@ -490,7 +498,7 @@ for t=2:Total_time
     UA_front(t) = A_front*h_front(t) + 1*(A_side*h_side(t));
     UA_back(t) = A_back*h_rear(t) + 1*(A_side*h_side(t));
 
-    %% Conductances Matrix
+    % Conductances Matrix
     % Tamb --K1-> Troof --K2-> Tceiling --K3-> Tcabin_back
     K1=h_side(t)*A_roof;
     K2=A_roof*k_ceiling/e_ceiling;
@@ -536,7 +544,7 @@ for t=2:Total_time
     UA_cabin = 1/K1 + 1/K2 + 1/K3 + 1/K4 + 1/K5 + 1/K6 + 1/K7 + 1/K8 + ...
         1/K9 + 1/K10 + 1/K11 + 1/K12 + 1/K13 + 1/K14 + 1/K15 + 1/K16 + 1/K17;
 
-    %% Heat Flows
+    % Heat Flows
     enthalpy_cabin(t) = 1006*Tcabin(t) + (2501000 + 1770*Tcabin(t))*X; % J/kg, Faya 2013 % Cabin air enthalpy
     Qleakage(t) = leakage_volumerate*density_air*(enthalpy_amb(t)-enthalpy_cabin(t)); % W, J/s
     Qvent(t) = vent_volumerate*density_air*(enthalpy_amb(t)-enthalpy_cabin(t)); % W, J/s
@@ -544,20 +552,32 @@ for t=2:Total_time
     Qhuman(t) = N_Humans.*h_cabin*A_skin*abs(temperature(2)-T_skin);
     Qequipment(t) = heat_equipment;
     Qirr(t)=0;
+    % 
+    % % Calculate net heat exchange (W) from the MAC system
+    % if cooling
+    %     Q_MAC = -Q_evap_req(t);  % Cooling removes heat (negative sign)
+    % else
+    %     Q_MAC = -Q_cond_req(t);   % Heating adds heat (Q_cond_req < 0 → -Q_cond_req > 0)
+    % end
 
     %% Boundary conditions vector for scalar or vector T amb inputs
     if(size(T_cell)==[1 1])
         Tbc=[T_cell;
-            -Qhuman(t)/2-Qirr(t)/2-Qbase(t)/2-Qengine(t)-Qvent(t)-Q_MAC_zone(t); 
-            -Qhuman(t)/2-Qirr(t)/2-Qbase(t)/2-Qexhaust(t)-Qleakage(t)-Q_MAC_zone(t)]; 
+            Qhuman(t)/2+Qirr(t)/2+Qbase(t)/2+Qengine(t)+Qvent(t)-Q_MAC(t)/2; 
+            Qhuman(t)/2+Qirr(t)/2+Qbase(t)/2+Qexhaust(t)+Qleakage(t)-Q_MAC(t)/2]; 
     else
         Tbc=[T_cell(t);
-            -Qhuman(t)/2-Qirr(t)/2-Qbase(t)/2-Qengine(t)-Qvent(t)-Q_MAC_zone(t); 
-            -Qhuman(t)/2-Qirr(t)/2-Qbase(t)/2-Qexhaust(t)-Qleakage(t)-Q_MAC_zone(t)]; 
+            Qhuman(t)/2+Qirr(t)/2+Qbase(t)/2+Qengine(t)+Qvent(t)-Q_MAC(t)/2; 
+            Qhuman(t)/2+Qirr(t)/2+Qbase(t)/2+Qexhaust(t)+Qleakage(t)-Q_MAC(t)/2];  
     end
 
-    %% Temperatures calculation
-    temperature=(inv(K - C))*(Tbc - C*prev_temp);
+    % Temperatures calculation
+    temperature = (inv(K - C))*(Tbc - C*prev_temp);
+
+    Tamb(:,t) = temperature(1); %T_cell: boundary condition, Tamb: simulated
+    Tcabin_front(:,t) = temperature(2);
+    Tcabin_back(:,t) = temperature(3);
+    Tcabin(:,t) = (Tcabin_front(:,t)+Tcabin_back(:,t))/2;
 
     %% Exchange from the front and back:
     % if (temperature(2) > T_cell(t))
@@ -590,24 +610,36 @@ for t=2:Total_time
     Qcabin_received(t) = Qhuman(t) + Qequipment(t) + Qengine(t) + Qexhaust(t) + Qvent(t) + Qleakage(t) + Qcv_received(t);
     Qcabin_tot(t) = Qcabin_received(t) + Qcv_emitted(t);
 
-%%  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% v2 %%%%%%%
-    % Tcabin_av(t) = (temperature(2)+temperature(3))/2;
-    % Qcabin_req(t) = cp_air*V_cabin*density_air*(T_target - Tcabin_av(t))/180; % 3 min
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% v3 %%%%%%%
-    % Qcabin_req(t)=Q_evap(t-1);
-    % Q_evap_req(t) = abs(Qcabin_req(t-1));
     
-    Qcabin_req(t) = cp_air*V_cabin*density_air*(T_target - Tcabin(t))/t;
-    
-    % Define cooling or heating mode & evap/condenser temps
-    if (T_cell(1) >= T_target)
-       cooling = true;
-       Q_evap_req(t) = abs(Qcabin_req(t));
+    %% Set theoretical demad:
+    Qcabin_req(t) = cp_air*V_cabin*density_air*(T_target - Tcabin(t-1))/t;
+
+    %% (new) PID to get the feedback control of deltaT = target - cabin
+    Kp=0.1;
+    Ki=0.01;
+    Kd=0.05;
+
+    error(t) = T_target - Tcabin(t);
+
+    error_integral(t) = error_integral(t) + error(t) * timestep;
+    max_integral = 1000;  % Adjust based on system limits
+    error_integral(t) = min(max(error_integral(t), -max_integral), max_integral);
+
+    error_derivative(t) = (error(t) - prev_error) / timestep;
+
+    PID_output(t) = Kp*error(t) + Ki*error_integral(t) + Kd*error_derivative(t);
+    prev_error = error(t);
+
+    %% Define MAC mode, evap/condenser temperatures
+    % and Hybrid feedforward + PID control
+    if cooling
+       Q_evap_req(t) = abs(Qcabin_req(t)) + PID_output(t);  % Cooling
+       Q_cond_req(t) = 0;
        T_evap(t) = T_target - delta_T_evap;
        T_cond(t) = T_cell(t) + delta_T_cond;
-    else % Heating
-       cooling = false;
-       Q_cond_req(t) = abs(Qcabin_req(t));
+    else
+       Q_cond_req(t) = abs(Qcabin_req(t)) + PID_output(t);  % Heating
+       Q_evap_req(t) = 0;
        T_evap(t) = T_cell(t) - delta_T_evap;
        T_cond(t) = T_target + delta_T_cond;
     end
@@ -706,38 +738,31 @@ for t=2:Total_time
     COP(t)=(h1(t)-h4(t))/(h2(t)-h1(t));
     % heat absorbed by the refrigerant in the evaporator/work done by the compressor
 
+
     %% v3: PID CONTROLLER for Compressor Speed
-    % u(t) = Kp * e(t) + Ki * integral(e(t)) + Kd * derivative(e(t));
+    % % u(t) = Kp * e(t) + Ki * integral(e(t)) + Kd * derivative(e(t));
+    % 
+    % % Controlled variable
+    % temp_error(t) = Tcabin(:,t) - T_target; % there's an opposite effect between error&comp_speed, so they are inversly proportional
+    % 
+    % % PID gains
+    % Kp = 0.05;  % 0.05 Large immediate reaction on the output to bring the process value close to the set point
+    % Ki = 0.005; % The longer it takes for the process value to reach the set point, the more effect the integral will have on the output
+    % Kd = 0;     % If the process value is approaching the set point to fast, the derivative will limit the output to prevent the process value from overshooting the set point
+    % 
+    % % Proportional, integral and derivative terms
+    % P = Kp * temp_error(t);
+    % error_sum = error_sum + temp_error(t) * timestep; % Total integral (accumulate error)
+    % I = Ki * error_sum;
+    % D = Kd * (temp_error(t) - temp_error(t-1)) / timestep;
+    % 
+    % % Total control output
+    % comp_speed(t) = (P + I + D);
+    % 
+    % % Relating Speed to Mass Flow
+    % k = 0.005; % (kg/s)/rmp, %%% 0.01 ; 0.0028 %%%%%%%%%%%%%%%%%%% TBD
+    % mf(t) = k*comp_speed(t); % Proportional relationship
 
-    % Controlled variable
-    temp_error(t) = Tcabin(:,t) - T_target; % there's an opposite effect between error&comp_speed, so they are inversly proportional
-
-    % PID gains
-    Kp = 0.05;  % 0.05 Large immediate reaction on the output to bring the process value close to the set point
-    Ki = 0.005; % The longer it takes for the process value to reach the set point, the more effect the integral will have on the output
-    Kd = 0;     % If the process value is approaching the set point to fast, the derivative will limit the output to prevent the process value from overshooting the set point
-
-    % Proportional, integral and derivative terms
-    P = Kp * temp_error(t);
-    error_sum = error_sum + temp_error(t) * timestep; % Total integral (accumulate error)
-    I = Ki * error_sum;
-    D = Kd * (temp_error(t) - temp_error(t-1)) / timestep;
-
-    % Total control output
-    comp_speed(t) = (P + I + D);
-
-    % Relating Speed to Mass Flow
-    k = 0.005; % (kg/s)/rmp, %%% 0.01 ; 0.0028 %%%%%%%%%%%%%%%%%%% TBD
-    mf(t) = k*comp_speed(t); % Proportional relationship
-
-    % trial:vLimitation of the mass flow -> doesnt help the simulation
-        if mf(t) > 50/1000
-            mf(t) = 50/1000;
-            comp_speed(t) = mf(t)/k;
-        elseif mf(t) < 20/1000
-            mf(t) = 20/1000;
-            comp_speed(t) = mf(t)/k;
-        end
 
     %% trial: not working
         % mf(t) = (P + I + D);
@@ -770,8 +795,29 @@ for t=2:Total_time
     %         mf(t) = 0.95 * mf(t-1);
     %     end
     % end
-    % % FIXED value: mf(t)=20*1000; %kg/s, small: 20-50 g/s, SUVS: 100-200, HDV: 200-500
 
+    %% Refrigerant mass flow, kg/s: 
+    % //small: 20-50 g/s, SUVS: 100-200, HDV: 200-50// mf(t) = 100/1000; % kg/s
+    if cooling
+        mf(t) = Q_evap_req(t)/(h1(t)-h4(t));  % Mass flow for requested cooling
+    else
+        mf(t) = Q_cond_req(t)/(h2(t)-h3(t));  % Mass flow for requested heating
+    end
+
+    %% trial: Limitation of the mass flow -> doesnt help the simulation
+    % if mf(t) > 50/1000
+    %     mf(t) = 50/1000;
+    %     comp_speed(t) = mf(t)/k;
+    % elseif mf(t) < 20/1000
+    %     mf(t) = 20/1000;
+    %     comp_speed(t) = mf(t)/k;
+    % end
+
+    mf_min = 20/1000;  % kg/s
+    mf_max = 50/1000;
+    mf(t) = min(max(mf(t), mf_min), mf_max);
+
+    comp_speed(t) = mf(t)/k;
     %% Components' heat loads calculation
     % Cooling capacity, J/s
     Q_evap(t) = mf(t)*(h1(t)-h4(t));
@@ -794,11 +840,7 @@ for t=2:Total_time
     Names = {'P1';'T1';'T2';'P2';'T3';'P3';'T4';'P4';'COP';'mf';'W_comp';'Q_evap';'Q_cond'};
     MAC_calcs = table(P1',T1',T2',P2',T3',P3',T4',P4',COP',mf',W_comp',Q_evap',Q_cond','VariableNames',Names);
 
-    % Temperatures extraction
-    Tamb(:,t) = temperature(1); %T_cell: boundary condition, Tamb: simulated
-    Tcabin_front(:,t) = temperature(2);
-    Tcabin_back(:,t) = temperature(3);
-    Tcabin(:,t) = (Tcabin_front(:,t)+Tcabin_back(:,t))/2;
+
 end
 MAC_calcs = MAC_calcs(2:end,:);
 
