@@ -169,6 +169,8 @@ elseif suv == 1
     max_mf = 150;
 else disp("Define vehicle category.")
 end
+min_mf = min_mf/1000; %kg/s
+max_mf = max_mf/1000; 
 % /small:20-50 g/s, SUVS:100-200, HDV:200-500/ mf(t)=100/1000; %kg/s
 
 
@@ -449,8 +451,8 @@ Q_evap(t) = 0; % Heat exchanged in the evaporator [W]
 Q_cond(t) = 0; % Heat echanged in the condenser   [W]
 
 %% v3: Initial heat exchanged of cabin Air with the HVAC, W
-Q_MAC = ones(1,Total_time)*cp_air*V_cabin*density_air*(T_target - T_cell(1))/timestep;
-Q_MAC_zone = Q_MAC/2;
+Q_MAC = zeros(1,Total_time);
+Q_MAC(t) = cp_air*V_cabin*density_air*(T_target - T_cell(1))/timestep;
 
 % previous versions initializations
 cabin_received_cum_Wh = ones(1,Total_time);
@@ -461,7 +463,6 @@ mac_needed_Wh_WLTP = ones(1,Total_time);
 comp_Wh = ones(1,Total_time);
 comp_cum_Wh = ones(1,Total_time);
 comp_Wh_WLTP = ones(1,Total_time);
-
 active_time(t) = 0;
 active_time_simulated(t) = 0;
 cooling_time_simulated(t) = 0;
@@ -475,27 +476,30 @@ temp_error_prev = 0;
 error_sum = 0;
 temp_error(t) = 0; % Temperature error [-]
 temp_error = zeros(1,Total_time);
+W_comp(t) = 0;
 
-mf(t) = 20/1000; % Compressor refrigerant mass flow [kg/s]
+mf = zeros(1,Total_time); %20/1000; % Compressor refrigerant mass flow [kg/s]
 comp_speed = ones(1, Total_time)*1000; % Compressor speed [rpm]
 CO2 = ones(1,Total_time).*0;
+cooling = zeros(1,Total_time);
+heating = zeros(1,Total_time);
+mac_off = zeros(1,Total_time);
 
+% Initialize PID variables
 error = zeros(1,Total_time);
 error_integral = zeros(1,Total_time);
 error_derivative = zeros(1,Total_time);
 prev_error = 0;
+prev_error_integral = 0;
 PID_output = zeros(1,Total_time);
-W_comp(t) = 0;
 
 %% CALCULATION LOOP
-% Initialize PID variables
-error_integral = 0;
-prev_error = 0;
-
 for t = 2:Total_time
     %% 1. Determine Mode (Cooling/Heating)
-    cooling = (T_cell(t) >= T_target);  % True if cooling needed
-    
+    cooling(t) = (T_cell(t) > T_target);  % True if cooling
+    heating(t) = (T_cell(t) < T_target);
+    mac_off(t) = (T_cell(t) == T_target);
+
     %% 2. Heat Transfer Coefficients
     if t > 1800-323
         h_front(t) = 200;
@@ -559,32 +563,16 @@ for t = 2:Total_time
 
      %% 4. Heat Flows
     enthalpy_cabin(t) = 1006*Tcabin(t-1) + (2501000 + 1770*Tcabin(t-1))*X;
-    Qleakage(t) = leakage_volumerate*density_air*(enthalpy_amb(t)-enthalpy_cabin(t));
+    Qleakage(t) = -leakage_volumerate*density_air*(enthalpy_amb(t)-enthalpy_cabin(t));
     Qvent(t) = vent_volumerate*density_air*(enthalpy_amb(t)-enthalpy_cabin(t));
     Qhuman(t) = N_Humans*h_cabin*A_skin*abs(Tcabin(t-1)-T_skin);
     
-    %% 5. PID Controller
-    error = T_target - Tcabin(t-1);
-    error_integral = error_integral + error * timestep;
-    error_derivative = (error - prev_error) / timestep;
-    prev_error = error;
-    
-    % Anti-windup
-    max_integral = 1000;
-    error_integral = min(max(error_integral, -max_integral), max_integral);
-    
-    % PID Output (mass flow adjustment in kg/s)
-    Kp = 0.01; 
-    Ki = 0.001; 
-    Kd = 0.05;
-    PID_output = Kp*error + Ki*error_integral + Kd*error_derivative;
-    
     %% 6. Refrigeration Cycle
     % Set evaporator/condenser temps based on mode
-    if cooling
+    if cooling(t)
         T_evap(t) = T_target - delta_T_evap;
         T_cond(t) = T_cell(t) + delta_T_cond;
-    else
+    elseif heating(t)
         T_evap(t) = T_cell(t) - delta_T_evap;
         T_cond(t) = T_target + delta_T_cond;
     end
@@ -607,7 +595,7 @@ for t = 2:Total_time
         P_HighSide_max = interp1(T_ambient, P_HighSide_max_Pa, T_cell, 'linear', 'extrap');
     end
 
-    compression_ratio_min = 5.7357; % Average
+    compression_ratio_min = 5; % Average 5.7357
 
         % Refrigeration Cycle Points:
         % (1): evaporator outlet, salutared vapor;
@@ -680,34 +668,64 @@ for t = 2:Total_time
     % Coefficient of performance
     COP(t)=(h1(t)-h4(t))/(h2(t)-h1(t));
 
-    % Mass flow calculation with PID
+    %% 5. PID Controller
+    
+    % % Set theoretical demad
+    Qcabin_req(t) = cp_air*V_cabin*density_air*(T_target - Tcabin(t-1))/t;
 
-    if cooling
-        mf(t) = (50/1000) + PID_output;  % Base 50 g/s + PID adjustment
-        mf(t) = min(max(mf(t), min_mf/1000), max_mf/1000);  % Clamp to [20,50] g/s for hatchback
-    else
-        mf(t) = (50/1000) + PID_output;
-        mf(t) = min(max(mf(t), min_mf/1000), max_mf/1000);
+    % % First mass flow value (theoretical)
+    % mf_req(t) = Qcabin_req(t) / (h1(t)-h4(t)); % IF FIXED: 
+    mf_req(t) = 50/1000; %kg/s
+
+    error(t) = T_target - Tcabin(t-1);
+    error_derivative(t) = (error(t) - prev_error) / timestep;
+    % if (mf(t) > min_mf) && (mf(t) < max_mf) % Only integrate error when the mass flow is not saturated
+        error_integral(t) = prev_error_integral + error(t) * timestep;
+    % end
+
+    % error_derivative(t) = 0;
+    % error_integral(t) = 0;
+    
+    % Anti-windup
+    max_integral = 1000;
+    error_integral = min(max(error_integral, -max_integral), max_integral);
+    
+    % PID Output (mass flow adjustment in kg/s)
+    Kp = 0.001;    Ki = 0.001;    Kd = 0.05;
+    PID_output(t) = Kp*error(t) + Ki*error_integral(t) + Kd*error_derivative(t);
+
+    prev_error = error(t);
+    prev_error_integral = error_integral(t);
+
+
+    %% Mass flow calculation with PID and main heat loads
+    if cooling(t)
+        % Cooling: PID should REDUCE mass flow when cabin is too cold
+        mf(t) = mf_req(t) - PID_output(t);  % Base 50 g/s + PID adjustment   
+    elseif heating(t)
+        % Heating: PID should INCREASE mass flow when cabin is too cold
+        mf(t) = mf_req(t) + PID_output(t);
     end
+    % mf(t) = min(max(mf(t), min_mf), max_mf);  % Clamp to [20,50] g/s for hatchback
 
     Q_evap(t) = mf(t)*(h1(t)-h4(t));
     Q_cond(t) = mf(t)*(h3(t)-h2(t));
 
     % Compressor power, J/s
     W_comp(t) = mf(t)*(h2(t)-h1(t));
-
+    
     %% 7. Connect to Cabin Thermal Model
     % Convert refrigeration outputs to cabin heat effect
-    if cooling
-        Q_MAC_effect = -Q_evap(t);  % Heat removed from cabin
-    else
-        Q_MAC_effect = -Q_cond(t);  % Heat added to cabin
+    if cooling(t)
+        Q_MAC = -Q_evap(t);  % Heat removed from cabin
+    elseif heating(t)
+        Q_MAC = Q_cond(t);  % Heat  added to cabin
     end
 
     % Boundary condition (Tbc)
     Tbc = [T_cell(t);
-           (Qhuman(t)/2 + Qengine(t) + Qvent(t)) - Q_MAC_effect/2;
-           (Qhuman(t)/2 + Qexhaust(t) + Qleakage(t)) - Q_MAC_effect/2];
+           -(Qhuman(t)/2 + Qengine(t) + Qvent(t) + Q_MAC/2);
+           -(Qhuman(t)/2 + Qexhaust(t) + Qleakage(t) + Q_MAC/2)];
     
     % Solve for temperature
     temperature = (K - C) \ (Tbc - C*prev_temp);
@@ -720,111 +738,160 @@ for t = 2:Total_time
     
     %% 8. Debug Output
     if mod(t,100) == 0
-        fprintf('t=%d: Error=%.2fK, mf=%.3f kg/s, Q_MAC=%.1fW, Tcabin=%.2f°C, W_compr=%.1fW,\n',t, error, mf(t), Q_MAC_effect, Tcabin(t)-273.15, W_comp);
+        fprintf('t=%.0f: Error=%.2fK, mf=%.3fg/s, Q_MAC=%.1fW, Tcabin=%.2f°C, W_compr=%.1fW,\n',t, error, mf(t)*1000, Q_MAC, Tcabin(t)-273.15, W_comp);
     end
 
     %% 9. Extract values
-    Names = {'P1';'T1';'T2';'P2';'T3';'P3';'T4';'P4';'COP';'mf';'W_comp';'Q_evap';'Q_cond'};
-    MAC_calcs = table(P1',T1',T2',P2',T3',P3',T4',P4',COP',mf',W_comp',Q_evap',Q_cond','VariableNames',Names);
+    Names = {'P1';'T1';'h1';'T2';'P2';'h2';'T3';'P3';'h3';'T4';'P4';'h4';'COP';'mf';'W_comp';'Q_evap';'Q_cond'};
+    MAC_calcs = table(P1',T1',h1',T2',P2',h2',T3',P3',h3',T4',P4',h4',COP',mf(1,1:t)',W_comp',Q_evap',Q_cond','VariableNames',Names);
 
 end
 MAC_calcs = MAC_calcs(2:end,:);
 
+% Extract data from MAC_calcs table
+h = [MAC_calcs.h1, MAC_calcs.h2, MAC_calcs.h3, MAC_calcs.h4, MAC_calcs.h1]; % kJ/kg (add first point to close cycle)
+P = [MAC_calcs.P1, MAC_calcs.P2, MAC_calcs.P3, MAC_calcs.P4, MAC_calcs.P1]; % Convert MPa to Pa
+
 %% Plots MAC components
-figure(1)
+figure(1);
 plot(time(2:end), MAC_calcs.COP, 'LineWidth', 1);
-xlabel('Time (s)')
-ylabel('COP')
-grid on
+xlabel('Time (s)');
+ylabel('COP');
+grid on;
 
-figure(2)
+figure(2);
 plot(time(2:end), MAC_calcs.mf*1000, 'LineWidth', 1); % kg/s to g/s
-xlabel('Time (s)')
-ylabel('Refrigerant mass flow, g/s')
-grid on
+xlabel('Time (s)');
+ylabel('Refrigerant mass flow, g/s');
+grid on;
 
-figure(3)
+figure(3);
 plot(time(2:end), MAC_calcs.W_comp, 'LineWidth', 1);
-xlabel('Time (s)')
-ylabel('Compressor Work (W)')
-grid on
+xlabel('Time (s)');
+ylabel('Compressor Work (W)');
+grid on;
 
-figure(4)
+figure(4);
 plot(time(2:end), MAC_calcs.Q_evap, 'LineWidth', 1);
-xlabel('Time (s)')
-ylabel('Evaporator Heat Load (W)')
-grid on
+xlabel('Time (s)');
+ylabel('Evaporator Heat Load (W)');
+grid on;
 
-figure(5)
+figure(5);
 plot(time(2:end), MAC_calcs.Q_cond, 'LineWidth', 1);
-xlabel('Time (s)')
-ylabel('Condenser Heat Load (W)')
-grid on
+xlabel('Time (s)');
+ylabel('Condenser Heat Load (W)');
+grid on;
 
-figure(6)
+figure(6);
 plot(time, Qcabin_req, 'LineWidth', 1);
-xlabel('Time (s)')
-ylabel('Requested Cabin Heat Load (W)')
-grid on
+xlabel('Time (s)');
+ylabel('Requested Cabin Heat Load (W)');
+grid on;
 
-%% Plots Cabin Heat Loads
-figure(7)
-plot(time,Qcabin_tot,'LineWidth',1.5)
-hold on
-plot(time,Qcabin_received,'LineWidth',1.5)
-plot(time,Qcv_emitted,'LineWidth',1.5)
-ylabel('Cabin Heat Loads [W]')
-xlabel('Time [s]')
-legend('Cabin Total Req','Cabin Received','Cabin Emitted','Location','best')
-grid minor
+% figure(8)
+% plot(time,Qcabin_req,':k','LineWidth',1.5)
+% hold on
+% plot(time,Q_MAC,'-k','LineWidth',1.5)
+% grid minor
+% ylabel('MAC Heat [W]')
+% xlabel('Time [s]')
+% yyaxis right
+% ax = gca;
+% ax.YColor = [1 0 0];
+% hold on
+% plot(time,Qcabin_tot,'-r','LineWidth',1.5)
+% ylabel('Total Cabin Heat [W]','Color',[1 0 0])
+% legend('Target Heat: Cabin & evap requested heat)','MAC Heat: Evap given heat','Cabin Total: present heat','Location','best')
+% % saveas(figure(12),strcat(test,'_4'),'png')
 
-figure(8)
-plot(time,Qcabin_req,':k','LineWidth',1.5)
-hold on
-plot(time,Q_MAC,'-k','LineWidth',1.5)
-grid minor
-ylabel('MAC Heat [W]')
-xlabel('Time [s]')
-yyaxis right
-ax = gca;
-ax.YColor = [1 0 0];
-hold on
-plot(time,Qcabin_tot,'-r','LineWidth',1.5)
-ylabel('Total Cabin Heat [W]','Color',[1 0 0])
-legend('Target Heat: Cabin & evap requested heat)','MAC Heat: Evap given heat','Cabin Total: present heat','Location','best')
-% saveas(figure(12),strcat(test,'_4'),'png')
+figure(10);
+plot(time(2:end),Tcabin_front(2:end)-273.15,':b','LineWidth',1.5);
+hold on;
+plot(time(2:end),Tcabin_back(2:end)-273.15,':m','LineWidth',1.5);
+plot(time(2:end),T_cell(2:end)-273.15,'-k','LineWidth',1);
+plot(time(2:end),Tcabin(2:end)-273.15,':k','LineWidth',1.5);
+hold off;
+legend('T front simulated','T back simulated','TC ambient', 'T cabin simulated');
+grid minor;
+xlabel('Time [s]');
+ylabel('Temperature [ºC]');
 
-figure(9)
-plot(Q_evap)
-hold on
-plot(-Qcabin_req)
-legend('Evap heat given (Q MAC)','Cabin heat requested (= Q evap req)')
-
-figure(10)
-plot(time(2:end),Tcabin_front(2:end)-273.15,':b','LineWidth',1.5)
-hold on
-plot(time(2:end),Tcabin_back(2:end)-273.15,':m','LineWidth',1.5)
-plot(time(2:end),T_cell(2:end)-273.15,'-k','LineWidth',1)
-plot(time(2:end),Tcabin(2:end)-273.15,':k','LineWidth',1.5)
-hold off
-legend('T front simulated','T back simulated','TC ambient', 'T cabin simulated')
-grid minor
-xlabel('Time [s]')
-ylabel('Temperature [ºC]')
-
-figure(11)
-plot(time(2:end),comp_speed(2:end),':k','LineWidth',1.5)
-hold on
-plot(time(2:end),100*MAC_calcs.mf,'-k','LineWidth',1.5)
-yyaxis right
+figure(11);
+plot(time(2:end),comp_speed(2:end),':k','LineWidth',1.5);
+hold on;
+plot(time(2:end),100*MAC_calcs.mf,'-k','LineWidth',1.5);
+yyaxis right;
 plot(time(2:end), MAC_calcs.W_comp,'LineWidth',1);
-grid minor
-xlabel('Time [s]')
-legend('Compressor speed [rpm]','Mass flow[kg/s]*100','Compressor work (Y)[W]')
+grid minor;
+xlabel('Time [s]');
+legend('Compressor speed [rpm]','Mass flow[kg/s]*100','Compressor work (Y)[W]');
 
-figure(12)
-plot(temp_error)
-hold on
-plot(check_f)
-plot(check_b)
-legend('error','front heat exchange flag','back heat exchange flag')
+figure(13);
+hold on;
+grid on;
+plot(error,':','LineWidth',1.5);
+plot(error_integral,'--','LineWidth',1.5);
+plot(error_derivative,'-.','LineWidth',1.5);
+plot(PID_output,'-.','LineWidth',1.5);
+yyaxis right;
+plot(cooling,'-k','LineWidth',1);
+plot(heating,'--k','LineWidth',1);
+plot(mac_off,'-.r','LineWidth',1);
+ylim([-1 2]);
+ylabel('Cooling/Heating Flag');
+legend('error = T target - T cabin','integral error = prev int error + (T target - T cabin)*timestep','derivative error = (error - prev error)/timestep', 'PID output (kg/s)','Cooling', 'Heating','MAC off');
+grid on;
+
+figure(14);
+hold on;
+grid on;
+plot(error,':','LineWidth',1.5);
+plot(error_integral,'--','LineWidth',1.5);
+plot(error_derivative,'-.','LineWidth',1.5);
+legend('proportional error','integral error', 'derivative error')
+
+ %% p-h diagram
+% figure(12);
+% hold on;
+% grid on;
+% set(gca, 'YScale', 'log'); % Logarithmic pressure scale for better visualization
+% 
+% % Plot the cycle with different colors for each process
+% plot([h(1,4) h(1,1)], [P(1,4) P(1,1)], 'b-', 'LineWidth', 1, 'DisplayName', '4→1: Evaporator');
+% plot([h(1,1) h(1,2)], [P(1,1) P(1,2)], 'r-', 'LineWidth', 1, 'DisplayName', '1→2: Compressor');
+% plot([h(1,2) h(1,3)], [P(1,2) P(1,3)], 'g-', 'LineWidth', 1, 'DisplayName', '2→3: Condenser');
+% plot([h(1,3) h(1,4)], [P(1,3) P(1,4)], 'm-', 'LineWidth', 1, 'DisplayName', '3→4: Expansion');
+% 
+% % Mark the points
+% plot(h(1,1:4), P(1,1:4), 'ko', 'MarkerSize', 6, 'MarkerFaceColor', 'k');
+% 
+% % Add labels for points
+% text(h(1,1), P(1,1), ' 1', 'VerticalAlignment', 'bottom', 'FontSize', 8);
+% text(h(1,2), P(1,2), ' 2', 'FontSize', 8);
+% text(h(1,3), P(1,3), ' 3', 'FontSize', 8);
+% text(h(1,4), P(1,4), ' 4', 'VerticalAlignment', 'bottom', 'FontSize', 8);
+% 
+% % Add saturation lines (optional - requires CoolProp)
+% try
+%     % Get saturation properties
+%     h_f = py.CoolProp.CoolProp.PropsSI('H', 'Q', 0, 'P', P(1,1), Ref);
+%     h_g = py.CoolProp.CoolProp.PropsSI('H', 'Q', 1, 'P', P(1,1), Ref);
+%     P_sat = linspace(min(P(:)), max(P(:)), 100);
+%     hf_sat = arrayfun(@(p) py.CoolProp.CoolProp.PropsSI('H', 'Q', 0, 'P', p, Ref), P_sat);
+%     hg_sat = arrayfun(@(p) py.CoolProp.CoolProp.PropsSI('H', 'Q', 1, 'P', p, Ref), P_sat);
+% 
+%     plot(hf_sat, P_sat, 'k--', 'DisplayName', 'Saturated Liquid');
+%     plot(hg_sat, P_sat, 'k--', 'DisplayName', 'Saturated Vapor');
+% catch
+%     warning('Could not plot saturation lines - verify CoolProp installation');
+% end
+% 
+% % Formatting
+% xlabel('Specific Enthalpy (kJ/kg)');
+% ylabel('Pressure (MPa) - Logarithmic Scale');
+% title('Refrigeration Cycle on p-h Diagram');
+% legend('Location', 'best');
+% set(gca);
+% hold off;
+
