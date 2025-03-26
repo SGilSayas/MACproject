@@ -674,8 +674,8 @@ for t = 2:Total_time
     Qcabin_req(t) = cp_air*V_cabin*density_air*(T_target - Tcabin(t-1))/t;
 
     % % First mass flow value (theoretical)
-    % mf_req(t) = Qcabin_req(t) / (h1(t)-h4(t)); % IF FIXED: 
-    mf_req(t) = 50/1000; %kg/s
+    mf_req(t) = Qcabin_req(t) / (h1(t)-h4(t)); % IF FIXED: 
+    %mf_req(t) = 50/1000; %kg/s
 
     error(t) = T_target - Tcabin(t-1);
     error_derivative(t) = (error(t) - prev_error) / timestep;
@@ -691,7 +691,8 @@ for t = 2:Total_time
     error_integral = min(max(error_integral, -max_integral), max_integral);
     
     % PID Output (mass flow adjustment in kg/s)
-    Kp = 0.001;    Ki = 0.001;    Kd = 0.05;
+    % too sinusoidal: Kp = 0.001;    Ki = 0.001;    Kd = 0.05;
+    Kp = 0.02;    Ki = 0.002;    Kd = 0.0001;
     PID_output(t) = Kp*error(t) + Ki*error_integral(t) + Kd*error_derivative(t);
 
     prev_error = error(t);
@@ -737,8 +738,9 @@ for t = 2:Total_time
     prev_temp = temperature;
     
     %% 8. Debug Output
-    if mod(t,100) == 0
-        fprintf('t=%.0f: Error=%.2fK, mf=%.3fg/s, Q_MAC=%.1fW, Tcabin=%.2f°C, W_compr=%.1fW,\n',t, error, mf(t)*1000, Q_MAC, Tcabin(t)-273.15, W_comp);
+    if mod(t, 100) == 0  % Print every 100 seconds
+        fprintf('t=%d s: Tcabin=%.2f°C, Q_MAC= %.1fW, W_compr= %.1fW, mf= %.3f g/s\n', ...
+            t,Tcabin(t) - 273.15,Q_MAC,W_comp(t),mf(t) * 1000);
     end
 
     %% 9. Extract values
@@ -830,9 +832,6 @@ legend('Compressor speed [rpm]','Mass flow[kg/s]*100','Compressor work (Y)[W]');
 figure(13);
 hold on;
 grid on;
-plot(error,':','LineWidth',1.5);
-plot(error_integral,'--','LineWidth',1.5);
-plot(error_derivative,'-.','LineWidth',1.5);
 plot(PID_output,'-.','LineWidth',1.5);
 yyaxis right;
 plot(cooling,'-k','LineWidth',1);
@@ -840,7 +839,7 @@ plot(heating,'--k','LineWidth',1);
 plot(mac_off,'-.r','LineWidth',1);
 ylim([-1 2]);
 ylabel('Cooling/Heating Flag');
-legend('error = T target - T cabin','integral error = prev int error + (T target - T cabin)*timestep','derivative error = (error - prev error)/timestep', 'PID output (kg/s)','Cooling', 'Heating','MAC off');
+legend('PID output (kg/s)','Cooling', 'Heating','MAC off');
 grid on;
 
 figure(14);
