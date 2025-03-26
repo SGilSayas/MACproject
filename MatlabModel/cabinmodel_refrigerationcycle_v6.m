@@ -709,6 +709,10 @@ for t = 2:Total_time
     Q_cond(t) = mf(t)*(h3(t)-h2(t));
     W_comp(t) = mf(t)*(h2(t)-h1(t)); % Compressor power, J/s
 
+    % MAC energy
+    E_comp_Wh(t) = (W_comp(t)+W_comp(t-1))/2*timestep/3600; % Instantaneous energy
+    cumE_comp_Wh = cumtrapz(timestep.*W_comp./3600); % Cumulative energy
+
     % Convert refrigeration outputs (c.v.1) to cabin inputs (control vol 2)
     if cooling(t)
         Q_MAC = -Q_evap(t);  % Heat removed from cabin
@@ -749,40 +753,52 @@ P = [MAC_calcs.P1, MAC_calcs.P2, MAC_calcs.P3, MAC_calcs.P4, MAC_calcs.P1]; % Co
 
 %% Plots MAC components
 figure(1);
-plot(time(2:end), MAC_calcs.COP, 'LineWidth', 1);
-xlabel('Time (s)');
-ylabel('COP');
+hold on;
 grid on;
+grid minor;
+plot(time(2:end), MAC_calcs.COP, 'LineWidth', 1);
+xlabel('Time [s]');
+ylabel('COP');
 
 figure(2);
-plot(time(2:end), MAC_calcs.mf*1000, 'LineWidth', 1); % kg/s to g/s
-xlabel('Time (s)');
-ylabel('Refrigerant mass flow, g/s');
+hold on;
 grid on;
+grid minor;
+plot(time(2:end), MAC_calcs.mf*1000, 'LineWidth', 1); % kg/s to g/s
+xlabel('Time [s]');
+ylabel('Refrigerant mass flow [g/s]');
 
 figure(3);
-plot(time(2:end), MAC_calcs.W_comp, 'LineWidth', 1);
-xlabel('Time (s)');
-ylabel('Compressor Work (W)');
+hold on;
 grid on;
+grid minor;
+plot(time(2:end), MAC_calcs.W_comp, 'LineWidth', 1);
+xlabel('Time [s]');
+ylabel('Compressor Work [W]');
 
 figure(4);
-plot(time(2:end), MAC_calcs.Q_evap, 'LineWidth', 1);
-xlabel('Time (s)');
-ylabel('Evaporator Heat Load (W)');
+hold on;
 grid on;
+grid minor;
+plot(time(2:end), MAC_calcs.Q_evap, 'LineWidth', 1);
+xlabel('Time [s]');
+ylabel('Evaporator Heat Load [W]');
 
 figure(5);
-plot(time(2:end), MAC_calcs.Q_cond, 'LineWidth', 1);
-xlabel('Time (s)');
-ylabel('Condenser Heat Load (W)');
+hold on;
 grid on;
+grid minor;
+plot(time(2:end), MAC_calcs.Q_cond, 'LineWidth', 1);
+xlabel('Time [s]');
+ylabel('Condenser Heat Load [W]');
 
 figure(6);
-plot(time, Qcabin_req, 'LineWidth', 1);
-xlabel('Time (s)');
-ylabel('Requested Cabin Heat Load (W)');
+hold on;
 grid on;
+grid minor;
+plot(time, Qcabin_req, 'LineWidth', 1);
+xlabel('Time [s]');
+ylabel('Requested Cabin Heat Load [W]');
 
 % figure(8)
 % plot(time,Qcabin_req,':k','LineWidth',1.5)
@@ -801,47 +817,61 @@ grid on;
 % % saveas(figure(12),strcat(test,'_4'),'png')
 
 figure(10);
-plot(time(2:end),Tcabin_front(2:end)-273.15,':b','LineWidth',1.5);
 hold on;
-plot(time(2:end),Tcabin_back(2:end)-273.15,':m','LineWidth',1.5);
-plot(time(2:end),T_cell(2:end)-273.15,'-k','LineWidth',1);
-plot(time(2:end),Tcabin(2:end)-273.15,':k','LineWidth',1.5);
-hold off;
-legend('T front simulated','T back simulated','TC ambient', 'T cabin simulated');
+grid on;
 grid minor;
+plot(time(2:end),Tcabin_front(2:end)-273.15,':b','LineWidth',1.5);
+plot(time(2:end),Tcabin_back(2:end)-273.15,':m','LineWidth',1.5);
+plot(time(2:end),Tcabin(2:end)-273.15,':k','LineWidth',1.5);
+plot(time(2:end),T_cell(2:end)-273.15,'-k','LineWidth',1);
+legend('T front simulated','T back simulated','T cabin simulated','TC exterior');
 xlabel('Time [s]');
 ylabel('Temperature [ºC]');
 
 figure(11);
-plot(time(2:end),comp_speed(2:end),':k','LineWidth',1.5);
 hold on;
+grid on;
+grid minor;
+plot(time(2:end),comp_speed(2:end),':k','LineWidth',1.5);
 plot(time(2:end),100*MAC_calcs.mf,'-k','LineWidth',1.5);
 yyaxis right;
 plot(time(2:end), MAC_calcs.W_comp,'LineWidth',1);
-grid minor;
 xlabel('Time [s]');
 legend('Compressor speed [rpm]','Mass flow[kg/s]*100','Compressor work (Y)[W]');
 
 figure(13);
 hold on;
 grid on;
+grid minor;
 plot(PID_output,'-.','LineWidth',1.5);
 yyaxis right;
+grid on;
 plot(cooling,'-k','LineWidth',1);
 plot(heating,'--k','LineWidth',1);
 plot(mac_off,'-.r','LineWidth',1);
 ylim([-1 2]);
 ylabel('Cooling/Heating Flag');
 legend('PID output (kg/s)','Cooling', 'Heating','MAC off');
-grid on;
 
 figure(14);
 hold on;
 grid on;
+grid minor;
 plot(error,':','LineWidth',1.5);
 plot(error_integral,'--','LineWidth',1.5);
 plot(error_derivative,'-.','LineWidth',1.5);
 legend('proportional error','integral error', 'derivative error')
+
+figure(15);
+hold on;
+grid on;
+plot(time,cumE_comp_Wh,'LineWidth',1.5);
+xlabel('Time (s)');
+ylabel('MAC Comulative Energy (Wh)');
+last_y = cumE_comp_Wh(end);
+annotation(figure(15),'textarrow',[0.717857142857142 0.9],...
+    [0.890476190476193 0.895238095238096],'String',sprintf('Last value: %.1f', last_y));
+grid minor;
 
  %% p-h diagram
 % figure(12);
