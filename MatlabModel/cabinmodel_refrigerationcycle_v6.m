@@ -567,7 +567,7 @@ for t = 2:Total_time
     Qvent(t) = vent_volumerate*density_air*(enthalpy_amb(t)-enthalpy_cabin(t));
     Qhuman(t) = N_Humans*h_cabin*A_skin*abs(Tcabin(t-1)-T_skin);
     
-    %% 6. Refrigeration Cycle
+    %% 5. Refrigeration Cycle
     % Set evaporator/condenser temps based on mode
     if cooling(t)
         T_evap(t) = T_target - delta_T_evap;
@@ -668,38 +668,33 @@ for t = 2:Total_time
     % Coefficient of performance
     COP(t)=(h1(t)-h4(t))/(h2(t)-h1(t));
 
-    %% 5. PID Controller
+    %% 6. PID Controller
     
-    % % Set theoretical demad
+    % Set theoretical demad
     Qcabin_req(t) = cp_air*V_cabin*density_air*(T_target - Tcabin(t-1))/t;
 
-    % % First mass flow value (theoretical)
-    mf_req(t) = (Qcabin_req(t) / (h1(t)-h4(t))); % IF FIXED: 
-    %mf_req(t) = 50/1000; %kg/s
+    % First mass flow value (theoretical)
+    mf_req(t) = (Qcabin_req(t) / (h1(t)-h4(t))); % IF FIXED:mf_req(t)=50/1000; %kg/s
 
+    % Proportional, Derivative and Integral Error
     error(t) = T_target - Tcabin(t-1);
     error_derivative(t) = (error(t) - prev_error) / timestep;
     if (mf(t) > min_mf) && (mf(t) < max_mf) % Only integrate error when the mass flow is not saturated
         error_integral(t) = prev_error_integral + error(t) * timestep;
     end
-
-    % error_derivative(t) = 0;
-    % error_integral(t) = 0;
     
     % Anti-windup
     max_integral = 1000;
     error_integral = min(max(error_integral, -max_integral), max_integral);
     
     % PID Output (mass flow adjustment in kg/s)
-    % too sinusoidal: Kp = 0.001;    Ki = 0.001;    Kd = 0.05;
     Kp = 0.02;    Ki = 0.002;    Kd = 0.0001;
     PID_output(t) = Kp*error(t) + Ki*error_integral(t) + Kd*error_derivative(t);
 
     prev_error = error(t);
     prev_error_integral = error_integral(t);
 
-
-    %% Mass flow calculation with PID and main heat loads
+    % Mass flow calculation with PID and main heat loads
     if cooling(t)
         % Cooling: PID should REDUCE mass flow when cabin is too cold
         mf(t) = mf_req(t) - PID_output(t);  % Base 50 g/s + PID adjustment   
@@ -709,14 +704,12 @@ for t = 2:Total_time
     end
     % mf(t) = min(max(mf(t), min_mf), max_mf);  % Clamp to [20,50] g/s for hatchback
 
+    %% 7. Connect to Cabin Thermal Model
     Q_evap(t) = mf(t)*(h1(t)-h4(t));
     Q_cond(t) = mf(t)*(h3(t)-h2(t));
+    W_comp(t) = mf(t)*(h2(t)-h1(t)); % Compressor power, J/s
 
-    % Compressor power, J/s
-    W_comp(t) = mf(t)*(h2(t)-h1(t));
-    
-    %% 7. Connect to Cabin Thermal Model
-    % Convert refrigeration outputs to cabin heat effect
+    % Convert refrigeration outputs (c.v.1) to cabin inputs (control vol 2)
     if cooling(t)
         Q_MAC = -Q_evap(t);  % Heat removed from cabin
     elseif heating(t)
