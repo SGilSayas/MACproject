@@ -144,7 +144,7 @@ time = 1:timestep:Total_time;
 time = transpose(time);
 
 % Cabin target temperature in C?
-T_target = 10;
+T_target = -10;
 T_target = T_target + 273.15; %K
 
 % Number of humans?
@@ -713,7 +713,7 @@ for t = 2:Total_time
 
     if mf(t) > max_mf
         mf(t) = max_mf;
-    elseif mf(t) > min_mf
+    elseif mf(t) < min_mf
         mf(t) = min_mf;
     end
     % mf(t) = min(max(mf(t), min_mf), max_mf);  % Clamp to [20,50] g/s for hatchback
