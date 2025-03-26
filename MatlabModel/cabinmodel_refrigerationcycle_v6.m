@@ -674,14 +674,14 @@ for t = 2:Total_time
     Qcabin_req(t) = cp_air*V_cabin*density_air*(T_target - Tcabin(t-1))/t;
 
     % % First mass flow value (theoretical)
-    mf_req(t) = Qcabin_req(t) / (h1(t)-h4(t)); % IF FIXED: 
+    mf_req(t) = (Qcabin_req(t) / (h1(t)-h4(t))); % IF FIXED: 
     %mf_req(t) = 50/1000; %kg/s
 
     error(t) = T_target - Tcabin(t-1);
     error_derivative(t) = (error(t) - prev_error) / timestep;
-    % if (mf(t) > min_mf) && (mf(t) < max_mf) % Only integrate error when the mass flow is not saturated
+    if (mf(t) > min_mf) && (mf(t) < max_mf) % Only integrate error when the mass flow is not saturated
         error_integral(t) = prev_error_integral + error(t) * timestep;
-    % end
+    end
 
     % error_derivative(t) = 0;
     % error_integral(t) = 0;
