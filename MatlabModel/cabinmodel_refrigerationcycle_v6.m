@@ -4,6 +4,10 @@ close all;
 clear py;
 
 %%
+% V6: it runs, PID working, energy calc implemented
+%
+% V5: check github versions comments
+%
 % V4_2: new version of v4 starting fresh from v3
 % - 14 nodes modified to 3 nodes and it works
 % - Modification of Q_engine and Q_exhaust, deleting "_av", so taking the
@@ -13,7 +17,7 @@ clear py;
 % - Reset of loop end point (Total_time, instead of Total_time+1)
 % - Reset initialization vectors to (Total_time, instead of Total_time+1) 
 % - Reset limits for plots to keep same vector length
-% - NEXT GOAL: the script out of the folder
+% - NEXT GOAL: the script out of the folder (not done)
 %
 % V3: it works
 % - Initial heat exchanged cabin Air with the HVAC defined with T target
@@ -48,7 +52,7 @@ clear py;
 
 %% Input data files upload
 timestep = 1;
-folderPath = 'C:\Users\susan\OneDrive - UPV\Desktop_UPV\Doctorado\PhD Simulation Model\Lumped model\2025_Matlab Cabin HVAC model\inputs_thermalmodelv4_forrunning';
+folderPath = 'C:\Users\susan\OneDrive - UPV\Desktop_UPV\Doctorado\PhD Simulation Model\Lumped model\2025_Matlab Cabin HVAC model\thermalmodel_inputs';
 % Read CSV files
 csvFiles = dir(fullfile(folderPath, '*.csv'));
 for i = 1:length(csvFiles)
@@ -87,7 +91,11 @@ for i = 1:length(matFiles)
 end
 disp('All files have been read and extracted successfully.');
 
+%% 
+TCfiltering = 0; % 0; for no
+
 %% TC filtering
+if TCfiltering
     l=[length(TC_cell)];
     T=[fft(TC_cell(:,:)/l(1))];
     k=0.1;
@@ -126,7 +134,7 @@ disp('All files have been read and extracted successfully.');
     time_last_30 = time(1770:1800);
     TC_substitute_end = sin_fit.a * sin(sin_fit.b * time_last_30 + sin_fit.c) + sin_fit.d;
     TC_cell(1770:1800) = TC_substitute_end;
-
+end
 %% Test conditions
 t = 1;
 timestep = 1;
@@ -136,7 +144,7 @@ time = 1:timestep:Total_time;
 time = transpose(time);
 
 % Cabin target temperature in C?
-T_target = 22;
+T_target = 10;
 T_target = T_target + 273.15; %K
 
 % Number of humans?
@@ -673,7 +681,7 @@ for t = 2:Total_time
     % Set theoretical demad
     Qcabin_req(t) = cp_air*V_cabin*density_air*(T_target - Tcabin(t-1))/t;
 
-    % First mass flow value (theoretical)
+    % Base mass flow value (theoretical)
     mf_req(t) = (Qcabin_req(t) / (h1(t)-h4(t))); % IF FIXED:mf_req(t)=50/1000; %kg/s
 
     % Proportional, Derivative and Integral Error
@@ -697,10 +705,16 @@ for t = 2:Total_time
     % Mass flow calculation with PID and main heat loads
     if cooling(t)
         % Cooling: PID should REDUCE mass flow when cabin is too cold
-        mf(t) = mf_req(t) - PID_output(t);  % Base 50 g/s + PID adjustment   
+        mf(t) = mf_req(t) - PID_output(t);  % Base + PID adjustment   
     elseif heating(t)
         % Heating: PID should INCREASE mass flow when cabin is too cold
         mf(t) = mf_req(t) + PID_output(t);
+    end
+
+    if mf(t) > max_mf
+        mf(t) = max_mf;
+    elseif mf(t) > min_mf
+        mf(t) = min_mf;
     end
     % mf(t) = min(max(mf(t), min_mf), max_mf);  % Clamp to [20,50] g/s for hatchback
 
