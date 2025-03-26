@@ -95,9 +95,9 @@ off_G8_22 = 0;
 off_G7_22 = 0;
 off_G8_35 = 0;
 off_G7_35 = 0;
-off_I5PV_35 = 0;
+off_I5PV_35 = 1;
 off_mustang_35 = 0;
-off_tucsonCD_35 = 1;
+off_tucsonCD_35 = 0;
 
 % Cabin target temperature
 macon = 0; % off=0, on=1
@@ -124,12 +124,10 @@ Irr = ones(1,Total_time+1)*Irr_scalar;
     % T_cell_constant = 35; %C
     % T_cell = ones(1,Total_time+1)*T_cell_constant + 273.15; %K % Row vecto
 
-%% Load input files from inputs folder
+%% Constant input data upload
 folderPath = 'C:\Users\susan\OneDrive - UPV\Desktop_UPV\Doctorado\PhD Simulation Model\Lumped model\2025_Matlab Cabin HVAC model\inputs_thermalmodelv4_forrunning';
-
 % Read CSV files
 csvFiles = dir(fullfile(folderPath, '*.csv'));
-% Loop through and read each CSV file
 for i = 1:length(csvFiles)
     csvFileName = fullfile(folderPath, csvFiles(i).name);
     disp(['Reading CSV file: ', csvFileName]);
@@ -142,13 +140,11 @@ for i = 1:length(csvFiles)
     
     % Assign the whole table as a single variable in the workspace
     assignin('base', csvFileBaseName, R1234yf_op_pres);
-    
+   
     disp(['Extracted table: ', csvFileBaseName]);
 end
-
 % Read .mat files
 matFiles = dir(fullfile(folderPath, '*.mat'));
-% Loop through and load each .mat file
 for i = 1:length(matFiles)
     fileName = fullfile(folderPath, matFiles(i).name);
     disp(['Loading .mat file: ', fileName]);
@@ -166,7 +162,6 @@ for i = 1:length(matFiles)
         disp(['Extracted .mat variable: ', varName]);
     end
 end
-
 disp('All files have been read and extracted successfully.');
 % Test file loaded from inputs_forrunning
 
@@ -233,13 +228,13 @@ elseif(off_I5PV_35 == 1)
     
     % Estimate frequency using FFT (optional but helps with accuracy)
     Y = fft(TC_trend - mean(TC_trend)); % Remove DC component
-    P2 = abs(Y / length(TC_trend));
-    P1 = P2(1:floor(length(TC_trend) / 2)); % Single-sided spectrum
-    [~, idx] = max(P1(2:end)); % Find dominant frequency, ignoring DC component
+    p2 = abs(Y / length(TC_trend));
+    p1 = p2(1:floor(length(TC_trend) / 2)); % Single-sided spectrum
+    [~, idx] = max(p1(2:end)); % Find dominant frequency, ignoring DC component
     dominant_freq = (idx + 1) / length(TC_trend) * (0.4 * pi); % (2 * pi) %Convert to angular frequency
     
     % Define a sinusoidal fit model explicitly
-    sinModel = fittype('a*sin(b*x + c) + d', 'independent', 'x', 'cat_factorficients', {'a', 'b', 'c', 'd'});
+    sinModel = fittype('a*sin(b*x + c) + d', 'independent', 'x', 'coefficients', {'a', 'b', 'c', 'd'});
     
     % Fit the data (adjust StartPoint based on estimated frequency)
     sin_fit = fit(time_trend, TC_trend, sinModel, ...
@@ -342,7 +337,7 @@ if(deletion_filter_peaks == 1 && (off_G7_22==1 || off_G7_35==1))
     end
 end
 
-%%
+%% If introducing as input Q engine and exhaust: add "_av" at loop
 Qengine_av = ones(1,Total_time+1)*mean(Qengine);
 Qexhaust_av = ones(1,Total_time+1)*mean(Qexhaust);
 
@@ -521,11 +516,11 @@ C_cabin_back = density_air*cp_air/timestep*V_cabin*0.5;
 
 C = zeros(3);
 C(1,1) = C_amb;
-C(2,2) = C_cabin_front + C_base*0.5;
-C(3,3) = C_cabin_back + C_base*0.5;
+C(2,2) = C_cabin_front;% + C_base*0.5;
+C(3,3) = C_cabin_back;% + C_base*0.5;
 
 %% Initialization of values
-% Initial heat transfer cat_factorficients, UA (W/K):
+% Initial heat transfer coefficients, UA (W/K):
 h_front(t) = 160;
 h_side(t) = 0.9*h_front(t);
 h_rear(t) = 0.1*h_front(t);
@@ -761,7 +756,6 @@ for t=1:Total_time-1 % better for for the mf: +1
 
     % Heat Flows
     enthalpy_cabin(t) = 1006*Tcabin(t) + (2501000 + 1770*Tcabin(t))*X; % J/kg, Faya 2013 % Cabin air enthalpy
-
     Qleakage(t) = - leakage_volumerate*density_air*(enthalpy_amb(t)-enthalpy_cabin(t)); % W, J/s
     Qvent(t) = vent_volumerate*density_air*(enthalpy_amb(t)-enthalpy_cabin(t)); % W, J/s
     Qbase(t) = alpha_base*(A_ws*G_ws_t(t)+A_rw*G_rw_t(t)+A_sidewindows*G_sidewindows_t(t)+A_sidewindows*G_doors_t(t));
@@ -771,7 +765,6 @@ for t=1:Total_time-1 % better for for the mf: +1
     Qequipment(t) = heat_equipment;
     Qengine_calc(t) = A_engine*U_engine*(T_engine(t)-Tcabin_front(:,t));% - 11 - 44;
     Qexhaust_calc(t) = A_exhaust*U_exhaust*(T_exhaust(t)-Tcabin_back(:,t));%  + 17.77;
-
     Qengine(t) = Qengine_calc(t) ;
     Qexhaust(t) = Qexhaust_calc(t) ;
 
@@ -780,43 +773,39 @@ for t=1:Total_time-1 % better for for the mf: +1
         Tbc=[T_cell;
             -Qhuman(t)/2-Qirr(t)/2-Qbase(t)/2-Qengine(t)-Qvent(t); %-Qhuman(t)-Qengine(t)-Qvent(t)-Qirr(t)/2-Qbase(t)/2;
             -Qhuman(t)/2-Qirr(t)/2-Qbase(t)/2-Qexhaust(t)-Qleakage(t)]; %-Qequipment(t)-Qexhaust(t)-Qleakage(t)-Qirr(t)/2-Qbase(t)/2];
-
     else
         Tbc=[T_cell(t);
             -Qhuman(t)/2-Qirr(t)/2-Qbase(t)/2-Qengine(t)-Qvent(t); %-Qhuman(t)-Qengine(t)-Qvent(t)-Qirr(t)/2-Qbase(t)/2;
             -Qhuman(t)/2-Qirr(t)/2-Qbase(t)/2-Qexhaust(t)-Qleakage(t)]; %-Qequipment(t)-Qexhaust(t)-Qleakage(t)-Qirr(t)/2-Qbase(t)/2];
-
     end
 
     %% Temperatures calculation
     temperature = (K - C)\(Tbc - C*prev_temp); % same but less accurate: temperature = inv(K - C)*(Tbc - C*prev_temp);
     
-    % %Exchange from the front and back:
-    % if (temperature(13) > T_cell(t)) 
-    %     temperature(13) = (density_air*V_cabin/2*cp_air*prev_temp(13)/timestep + UA_front(t)*T_cell(t))/( density_air*V_cabin/2*cp_air/timestep + UA_front(t) );
-    %     prev_temp(13)=temperature(13);
-    %     check_f(t) = 1;
-    %     Qcv_emitted(t) = (temperature(13)-T_cell(t))*UA_front(t);
-    %     Qcv_received(t) = 0;
-    % else
-    %     Qcv_emitted(t) = 0;
-    %     Qcv_received(t) = (T_cell(t)-temperature(13))*UA_front(t);
-    % end
-    % if (temperature(14) > T_cell(t))
-    %     temperature(14) = (density_air*V_cabin/2*cp_air*prev_temp(14)/timestep + UA_back(t)*T_cell(t))/(density_air*V_cabin/2*cp_air/timestep + UA_back(t));
-    %     prev_temp(14)=temperature(14);
-    %     check_b(t) = 1; 
-    %     % Qcv_emitted(t) = Qcv_emitted(t)-(temperature(14)-T_cell(t))*UA_back(t);
-    %     Qcv_emitted(t) = (temperature(14)-T_cell(t))*UA_back(t);
-    %     Qcv_received(t) = 0;
-    % else
-    %     Qcv_emitted(t) = 0;
-    %     %Qcv_received(t) = Qcv_received(t)+(T_cell(t)-temperature(14))*UA_back(t);
-    %     Qcv_received(t) = (T_cell(t)-temperature(14))*UA_back(t);
-    % end
-%CHECKS
-    Qcv_emitted(t) = 0;
-    % to 0 does not change anything Qcv_received(t) = 0;
+    %Exchange from the front and back:
+    if (temperature(2) > T_cell(t)) 
+        temperature(2) = (density_air*V_cabin/2*cp_air*prev_temp(2)/timestep + UA_front(t)*T_cell(t))/( density_air*V_cabin/2*cp_air/timestep + UA_front(t) );
+        prev_temp(2)=temperature(2);
+        check_f(t) = 1;
+        Qcv_emitted(t) = (temperature(2)-T_cell(t))*UA_front(t);
+        Qcv_received(t) = 0;
+    else
+        Qcv_emitted(t) = 0;
+        Qcv_received(t) = (T_cell(t)-temperature(2))*UA_front(t);
+    end
+    if (temperature(3) > T_cell(t))
+        temperature(3) = (density_air*V_cabin/2*cp_air*prev_temp(3)/timestep + UA_back(t)*T_cell(t))/(density_air*V_cabin/2*cp_air/timestep + UA_back(t));
+        prev_temp(3)=temperature(3);
+        check_b(t) = 1; 
+        % Qcv_emitted(t) = Qcv_emitted(t)-(temperature(3)-T_cell(t))*UA_back(t);
+        Qcv_emitted(t) = (temperature(3)-T_cell(t))*UA_back(t);
+        Qcv_received(t) = 0;
+    else
+        Qcv_emitted(t) = 0;
+        %Qcv_received(t) = Qcv_received(t)+(T_cell(t)-temperature(3))*UA_back(t);
+        Qcv_received(t) = (T_cell(t)-temperature(3))*UA_back(t);
+    end
+%CHECKS: Qcv_emitted(t) = 0;% to 0 does not change anything Qcv_received(t) = 0;
 
     Tamb(:,t)=temperature(1); %T_cell: boundary condition, Tamb: simulated
     Tcabin_front(:,t)=temperature(2);
